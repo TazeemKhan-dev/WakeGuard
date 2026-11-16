@@ -1,53 +1,48 @@
-ALARM APP — DEVELOPMENT PROGRESS
-Last updated: 2026-11-15
-Current phase: PLANNING / NOT STARTED
+WAKEGUARD — DEVELOPMENT PROGRESS
+Updated: 2026-11-16
+CURRENT PHASE: Begin local Room database integration; existing alarm creation and ringing implemented.
 
-PROJECT GOAL
-Android-only, offline-first Alarmy-like alarm app with linked alarm groups and explicit wake-up confirmation. AI-assisted vibe coding, fastest practical personal MVP.
+USER-CONFIRMED IMPLEMENTATION
+[x] Android project created and run on physical realme RMX3868
+[x] Jetpack Compose alarm home UI and alarm creation
+[x] Alarm scheduling and triggering
+[x] Full-screen ringing Activity / ringing service
+[x] Dismiss and 5-minute snooze
+[x] 15-minute ringing timeout
+[x] Vibration
 
-CONFIRMED DECISIONS
-[DECIDED] Android only.
-[DECIDED] Windows PC and physical Android phone available.
-[DECIDED] User does not want Android/Kotlin lessons; wants AI to generate and help integrate code.
-[DECIDED] Native Kotlin + Jetpack Compose preferred.
-[DECIDED] No backend, account, cloud sync, or premium feature dependency for MVP.
-[DECIDED] Linked group dismissal must not disable future repeating alarms.
-[DECIDED] First verify one real alarm before implementing groups/challenges.
+IMPLEMENTED / REORGANIZED, NEEDS REVERIFICATION
+[?] Refactored package structure cleaned of duplicate classes
+[?] Latest app builds after Git restoration / refactoring
+[?] Full-screen ringing retested on phone after latest edits
+[?] API 24 compatibility fix for ringing Activity compiled successfully
 
-IMPLEMENTATION STATUS — DO NOT INFER COMPLETION
-[ ] Android Studio setup confirmed
-[ ] Android project created
-[ ] App builds on Windows
-[ ] App installed on phone
-[ ] AlarmManager scheduling
-[ ] Receiver and ringing notification/UI
-[ ] Sound and vibration
-[ ] Snooze and dismiss
-[ ] Room persistence
-[ ] Alarm CRUD and repeats
-[ ] Linked alarm groups
-[ ] Awake confirmation
-[ ] Math challenge
-[ ] Permission onboarding
-[ ] Reboot and time-change recovery
-[ ] Device reliability tests
-[ ] APK built
+CURRENT WORK — NOT COMPLETE
+[ ] Room dependencies configured and Gradle sync/build verified
+[ ] AlarmEntity, AlarmDao, database, repository integrated with UI
+[ ] Alarms persist after closing/relaunching app
+[ ] Enabled-state and edits persist
 
-FILES CREATED SO FAR
-MASTER_CONTEXT.md — context for future AI conversations
-DEVELOPMENT_PLAN.md — milestones and acceptance criteria
-ARCHITECTURE.md — proposed system design and Android runtime
-PROGRESS.txt — this checkpoint
-No application source files have been created yet.
+FUTURE
+[ ] Weekday repeating alarms and next-occurrence logic
+[ ] Reboot/time-change rescheduling
+[ ] Linked alarm groups with same-session cancellation
+[ ] Awake confirmation and optional math challenge
+[ ] Reliability tests (lock screen, Doze, permission changes, reboot)
+[ ] Release packaging
 
-NEXT ACTION (START HERE)
-1. Ask user whether Android Studio is installed and which Android version their test phone runs.
-2. Create a fresh Kotlin + Compose project, build and install it on the phone.
-3. Implement a single one-time alarm vertical slice and test with locked screen.
-4. Update this file after each verified task, recording exact paths, errors, fixes, and next action.
+PAST BUILD TROUBLESHOOTING
+- Missing Room runtime/ktx dependencies caused unresolved `androidx.room` imports.
+- KSP error: `unexpected jvm signature V`.
+- AGP 9 built-in Kotlin conflict: `Using kotlin.sourceSets DSL ... not allowed`.
+- AGP/Kotlin plugin class-cast: `ApplicationExtensionImpl ... cannot be cast to BaseExtension`.
+- After Git restore: redeclaration of AlarmReceiver and duplicate scheduler/service classes due to leftover refactored files.
+- `AlarmRingActivity.kt` API 27 calls with minSdk 24; guarded fix suggested but not confirmed built.
 
-SESSION LOG
-2026-11-15: Requirements discussed; Android-only native stack chosen; handoff documents generated. No code written, compiled, or tested.
+NEXT STEPS
+1. Check current Git status and Build Output; verify no duplicate classes.
+2. Confirm baseline alarm creation/ringing works.
+3. Inspect actual current Gradle versions before Room changes; avoid speculative upgrades/downgrades.
+4. Add Room in small verified increments; commit stable baseline and verified Room milestone.
 
-NEW CHAT STARTER PROMPT
-"I'm building an Android-only offline-first alarm app through AI-assisted vibe coding. Please read the attached MASTER_CONTEXT.md, DEVELOPMENT_PLAN.md, ARCHITECTURE.md, and PROGRESS.txt. Do not assume anything is implemented. Continue from the NEXT ACTION in PROGRESS.txt. Provide copy-paste-ready files, exact paths, and commands; keep explanations brief; test one milestone at a time and update PROGRESS.txt with verified results."
+IMPORTANT: Never infer latest build success from earlier successes. The current on-disk tree has not been directly inspected.

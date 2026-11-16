@@ -1,0 +1,23 @@
+com/wakeguard/alarm/
+├── MainActivity.kt
+├── data/
+│   ├── local/
+│   │   ├── AlarmEntity.kt
+│   │   ├── AlarmDao.java
+│   │   └── WakeGuardDatabase.java
+│   └── repository/
+│       └── AlarmRepository.kt
+├── domain/
+│   ├── model/
+│   └── scheduler/
+│       └── AlarmScheduler.kt
+├── receiver/
+│   ├── AlarmReceiver.kt
+│   └── DismissReceiver.kt
+├── service/
+│   └── AlarmRingingService.kt
+└── ui/
+    ├── home/
+    ├── ringing/
+    │   └── AlarmRingActivity.kt
+    └── theme/

@@ -2,10 +2,12 @@
 package com.wakeguard.alarm
 
 import android.Manifest
-import android.app.AlarmManager
+import android.app.NotificationManager
 import android.app.TimePickerDialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -16,9 +18,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import android.app.NotificationManager
-import android.content.Context
-import android.net.Uri
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,7 +31,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.wakeguard.alarm.data.local.AlarmEntity
+import com.wakeguard.alarm.data.local.WakeGuardDatabase
+import com.wakeguard.alarm.data.repository.AlarmRepository
 import com.wakeguard.alarm.domain.scheduler.AlarmScheduler
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
 
@@ -40,14 +43,6 @@ private val Background = Color(0xFF101827)
 private val CardColor = Color(0xFF1E293B)
 private val Accent = Color(0xFF10B981)
 private val Muted = Color(0xFF94A3B8)
-
-data class AlarmItem(
-    val id: String = UUID.randomUUID().toString(),
-    val hour: Int,
-    val minute: Int,
-    val label: String = "New Alarm",
-    val enabled: Boolean = true
-)
 
 class MainActivity : ComponentActivity() {
 
@@ -66,43 +61,99 @@ class MainActivity : ComponentActivity() {
 fun WakeGuardHome() {
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
+    val repository = remember(context) {
+        AlarmRepository(
+            WakeGuardDatabase
+                .getInstance(context.applicationContext)
+                .alarmDao()
+        )
+    }
 
-LaunchedEffect(Unit) {
-    if (Build.VERSION.SDK_INT >= 34) {
-        val manager = context.getSystemService(
-            Context.NOTIFICATION_SERVICE
-        ) as NotificationManager
+    val alarms = remember {
+        mutableStateListOf<AlarmEntity>()
+    }
 
-        if (!manager.canUseFullScreenIntent()) {
-            Toast.makeText(
-                context,
-                "Enable full-screen alarms for WakeGuard",
-                Toast.LENGTH_LONG
-            ).show()
+    var isLoading by remember {
+        mutableStateOf(true)
+    }
 
-            val settingsIntent = Intent(
-                Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                Uri.parse("package:${context.packageName}")
-            )
+    var isBusy by remember {
+        mutableStateOf(false)
+    }
 
-            context.startActivity(settingsIntent)
+    fun showMessage(message: String) {
+        Toast.makeText(
+            context,
+            message,
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    fun requestExactAlarmPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+                    )
+                )
+            } catch (e: Exception) {
+                showMessage("Open settings to allow exact alarms")
+            }
         }
     }
-}
 
+    // Load persisted alarms when the screen opens.
+    LaunchedEffect(repository) {
+        try {
+            val savedAlarms = repository.getAllAlarms()
 
-    // Notification permission for Android 13+
+            alarms.clear()
+            alarms.addAll(savedAlarms)
+        } catch (e: Exception) {
+            showMessage("Could not load saved alarms")
+        } finally {
+            isLoading = false
+        }
+    }
+
+    // Full-screen alarm permission.
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            val manager = context.getSystemService(
+                Context.NOTIFICATION_SERVICE
+            ) as NotificationManager
+
+            if (!manager.canUseFullScreenIntent()) {
+                Toast.makeText(
+                    context,
+                    "Enable full-screen alarms for WakeGuard",
+                    Toast.LENGTH_LONG
+                ).show()
+
+                try {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                } catch (e: Exception) {
+                    showMessage("Check full-screen alarm permission")
+                }
+            }
+        }
+    }
+
+    // Android 13+ notification permission.
     val notificationPermissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
             if (!granted) {
-                Toast.makeText(
-                    context,
-                    "Allow notifications for alarm alerts",
-                    Toast.LENGTH_LONG
-                ).show()
+                showMessage("Allow notifications for alarm alerts")
             }
         }
 
@@ -120,20 +171,14 @@ LaunchedEffect(Unit) {
         }
     }
 
-    // Temporary in-memory storage.
-    // Room database will be added in the next milestone.
-    val alarms = remember {
-        mutableStateListOf<AlarmItem>()
-    }
-
     val nextAlarm = alarms
-        .filter { it.enabled }
+        .filter { it.isEnabled }
         .minByOrNull { alarm ->
             val now = Calendar.getInstance()
 
             val currentMinutes =
                 now.get(Calendar.HOUR_OF_DAY) * 60 +
-                    now.get(Calendar.MINUTE)
+                        now.get(Calendar.MINUTE)
 
             val alarmMinutes =
                 alarm.hour * 60 + alarm.minute
@@ -141,60 +186,100 @@ LaunchedEffect(Unit) {
             (alarmMinutes - currentMinutes + 1440) % 1440
         }
 
-    // Schedule a new alarm
+    // Create and persist an alarm.
     val timePicker = {
-        val now = Calendar.getInstance()
+        if (!isBusy && !isLoading) {
+            val now = Calendar.getInstance()
 
-        TimePickerDialog(
-            context,
-            { _, hour, minute ->
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
 
-                val newAlarm = AlarmItem(
-                    hour = hour,
-                    minute = minute
-                )
+                    if (!isBusy) {
+                        isBusy = true
 
-                val alarmId = newAlarm.id.hashCode()
+                        scope.launch {
+                            var savedAlarm: AlarmEntity? = null
 
-                val scheduled = AlarmScheduler.schedule(
-                    context = context,
-                    alarmId = alarmId,
-                    hour = hour,
-                    minute = minute,
-                    label = newAlarm.label
-                )
+                            try {
+                                // Preserve the existing Int-based
+                                // AlarmManager identity.
+                                val usedIds = alarms
+                                    .map { it.schedulerId }
+                                    .toSet()
 
-                if (scheduled) {
-                    alarms.add(newAlarm)
+                                var schedulerId: Int
 
-                    Toast.makeText(
-                        context,
-                        "Alarm scheduled!",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                } else {
-                    Toast.makeText(
-                        context,
-                        "Please allow exact alarms, then try again",
-                        Toast.LENGTH_LONG
-                    ).show()
+                                do {
+                                    schedulerId = UUID
+                                        .randomUUID()
+                                        .hashCode()
+                                } while (
+                                    schedulerId == 0 ||
+                                    schedulerId in usedIds
+                                )
 
-                    if (
-                        Build.VERSION.SDK_INT >=
-                        Build.VERSION_CODES.S
-                    ) {
-                        context.startActivity(
-                            Intent(
-                                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
-                            )
-                        )
+                                val newAlarm = AlarmEntity(
+                                    schedulerId = schedulerId,
+                                    hour = hour,
+                                    minute = minute,
+                                    label = "New Alarm",
+                                    isEnabled = true
+                                )
+
+                                val databaseId =
+                                    repository.insertAlarm(newAlarm)
+
+                                savedAlarm = newAlarm.copy(
+                                    id = databaseId
+                                )
+
+                                val scheduled =
+                                    AlarmScheduler.schedule(
+                                        context = context,
+                                        alarmId = schedulerId,
+                                        hour = hour,
+                                        minute = minute,
+                                        label = newAlarm.label
+                                    )
+
+                                if (scheduled) {
+                                    alarms.add(savedAlarm)
+                                    showMessage("Alarm saved and scheduled!")
+                                } else {
+                                    repository.deleteAlarmById(databaseId)
+                                    savedAlarm = null
+                                    showMessage(
+                                        "Exact alarm permission required"
+                                    )
+                                    requestExactAlarmPermission()
+                                }
+
+                            } catch (e: Exception) {
+                                // Remove any partially scheduled alarm.
+                                savedAlarm?.let {
+                                    AlarmScheduler.cancel(
+                                        context,
+                                        it.schedulerId
+                                    )
+                                    try {
+                                        repository.deleteAlarmById(it.id)
+                                    } catch (_: Exception) {
+                                    }
+                                }
+
+                                showMessage("Could not save alarm")
+                            } finally {
+                                isBusy = false
+                            }
+                        }
                     }
-                }
-            },
-            now.get(Calendar.HOUR_OF_DAY),
-            now.get(Calendar.MINUTE),
-            false
-        ).show()
+                },
+                now.get(Calendar.HOUR_OF_DAY),
+                now.get(Calendar.MINUTE),
+                false
+            ).show()
+        }
     }
 
     Column(
@@ -222,7 +307,7 @@ LaunchedEffect(Unit) {
 
         Spacer(Modifier.height(28.dp))
 
-        // Next Alarm Card
+        // Next alarm card.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -242,9 +327,13 @@ LaunchedEffect(Unit) {
             Spacer(Modifier.height(8.dp))
 
             Text(
-                text = nextAlarm?.let {
-                    formatTime(it.hour, it.minute)
-                } ?: "No alarms set",
+                text = if (isLoading) {
+                    "Loading..."
+                } else {
+                    nextAlarm?.let {
+                        formatTime(it.hour, it.minute)
+                    } ?: "No alarms set"
+                },
                 color = Color.White,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.Bold
@@ -253,10 +342,11 @@ LaunchedEffect(Unit) {
             Spacer(Modifier.height(4.dp))
 
             Text(
-                text = if (nextAlarm != null)
+                text = if (nextAlarm != null) {
                     "Your next scheduled time"
-                else
-                    "Create your first alarm",
+                } else {
+                    "Create your first alarm"
+                },
                 color = Accent,
                 fontSize = 13.sp
             )
@@ -286,7 +376,6 @@ LaunchedEffect(Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // Alarm List
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -301,80 +390,106 @@ LaunchedEffect(Unit) {
                     alarm = alarm,
                     onToggle = { enabled ->
 
-                        val index = alarms.indexOfFirst {
-                            it.id == alarm.id
-                        }
+                        if (!isBusy) {
+                            isBusy = true
 
-                        if (index != -1) {
+                            scope.launch {
+                                try {
+                                    if (enabled) {
 
-                            val alarmId = alarm.id.hashCode()
+                                        val scheduled =
+                                            AlarmScheduler.schedule(
+                                                context = context,
+                                                alarmId = alarm.schedulerId,
+                                                hour = alarm.hour,
+                                                minute = alarm.minute,
+                                                label = alarm.label
+                                            )
 
-                            if (enabled) {
+                                        if (!scheduled) {
+                                            showMessage(
+                                                "Exact alarm permission required"
+                                            )
+                                            requestExactAlarmPermission()
+                                        } else {
+                                            try {
+                                                repository.updateAlarm(
+                                                    alarm.copy(
+                                                        isEnabled = true
+                                                    )
+                                                )
 
-                                val scheduled =
-                                    AlarmScheduler.schedule(
-                                        context = context,
-                                        alarmId = alarmId,
-                                        hour = alarm.hour,
-                                        minute = alarm.minute,
-                                        label = alarm.label
-                                    )
+                                                val index =
+                                                    alarms.indexOfFirst {
+                                                        it.id == alarm.id
+                                                    }
 
-                                if (scheduled) {
-                                    alarms[index] =
-                                        alarm.copy(enabled = true)
+                                                if (index >= 0) {
+                                                    alarms[index] =
+                                                        alarm.copy(
+                                                            isEnabled = true
+                                                        )
+                                                }
 
-                                    Toast.makeText(
-                                        context,
-                                        "Alarm enabled",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                } else {
-                                    Toast.makeText(
-                                        context,
-                                        "Exact alarm permission required",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                                showMessage("Alarm enabled")
+                                            } catch (e: Exception) {
+                                                AlarmScheduler.cancel(
+                                                    context,
+                                                    alarm.schedulerId
+                                                )
+                                                throw e
+                                            }
+                                        }
 
-                                    if (
-                                        Build.VERSION.SDK_INT >=
-                                        Build.VERSION_CODES.S
-                                    ) {
-                                        context.startActivity(
-                                            Intent(
-                                                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+                                    } else {
+
+                                        // Persist disabled state first.
+                                        repository.updateAlarm(
+                                            alarm.copy(
+                                                isEnabled = false
                                             )
                                         )
+
+                                        AlarmScheduler.cancel(
+                                            context,
+                                            alarm.schedulerId
+                                        )
+
+                                        val index =
+                                            alarms.indexOfFirst {
+                                                it.id == alarm.id
+                                            }
+
+                                        if (index >= 0) {
+                                            alarms[index] =
+                                                alarm.copy(
+                                                    isEnabled = false
+                                                )
+                                        }
+
+                                        showMessage("Alarm disabled")
                                     }
+
+                                } catch (e: Exception) {
+                                    showMessage(
+                                        "Could not update alarm"
+                                    )
+                                } finally {
+                                    isBusy = false
                                 }
-
-                            } else {
-
-                                AlarmScheduler.cancel(
-                                    context,
-                                    alarmId
-                                )
-
-                                alarms[index] =
-                                    alarm.copy(enabled = false)
-
-                                Toast.makeText(
-                                    context,
-                                    "Alarm disabled",
-                                    Toast.LENGTH_SHORT
-                                ).show()
                             }
                         }
-                    }
+                    },
+                    enabled = !isBusy
                 )
             }
         }
 
         Spacer(Modifier.height(16.dp))
 
-        // Add Alarm Button
         Button(
             onClick = timePicker,
+            enabled = !isBusy && !isLoading,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(58.dp),
@@ -385,7 +500,11 @@ LaunchedEffect(Unit) {
         ) {
 
             Text(
-                text = "+  Add New Alarm",
+                text = if (isLoading) {
+                    "Loading..."
+                } else {
+                    "+  Add New Alarm"
+                },
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -396,8 +515,9 @@ LaunchedEffect(Unit) {
 
 @Composable
 fun AlarmCard(
-    alarm: AlarmItem,
-    onToggle: (Boolean) -> Unit
+    alarm: AlarmEntity,
+    onToggle: (Boolean) -> Unit,
+    enabled: Boolean = true
 ) {
 
     Row(
@@ -419,8 +539,11 @@ fun AlarmCard(
                     alarm.hour,
                     alarm.minute
                 ),
-                color = if (alarm.enabled)
-                    Color.White else Muted,
+                color = if (alarm.isEnabled) {
+                    Color.White
+                } else {
+                    Muted
+                },
                 fontSize = 27.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -435,8 +558,9 @@ fun AlarmCard(
         }
 
         Switch(
-            checked = alarm.enabled,
+            checked = alarm.isEnabled,
             onCheckedChange = onToggle,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = Accent
