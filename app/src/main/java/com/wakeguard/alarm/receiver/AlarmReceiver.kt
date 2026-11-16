@@ -1,5 +1,4 @@
-
-package com.wakeguard.alarm
+package com.wakeguard.alarm.receiver
 
 import android.content.BroadcastReceiver
 import android.content.Context

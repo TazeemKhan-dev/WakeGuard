@@ -50,7 +50,7 @@
 
         <!-- Full-screen ringing screen -->
         <activity
-            android:name=".AlarmRingActivity"
+            android:name=".ui.ringing.AlarmRingActivity"
             android:exported="false"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
@@ -59,17 +59,17 @@
 
         <!-- Alarm trigger -->
         <receiver
-            android:name=".AlarmReceiver"
+            android:name=".receiver.AlarmReceiver"
             android:exported="false" />
 
         <!-- Legacy dismiss receiver -->
         <receiver
-            android:name=".DismissReceiver"
+            android:name=".receiver.DismissReceiver"
             android:exported="false" />
 
         <!-- Ringing foreground service -->
         <service
-            android:name=".AlarmRingingService"
+            android:name=".service.AlarmRingingService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
