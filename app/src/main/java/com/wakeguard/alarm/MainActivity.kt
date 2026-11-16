@@ -83,6 +83,8 @@ fun WakeGuardHome() {
         mutableStateOf(false)
     }
 
+    var alarmToDelete by remember { mutableStateOf<AlarmEntity?>(null) }
+
     fun showMessage(message: String) {
         Toast.makeText(
             context,
@@ -480,7 +482,77 @@ fun WakeGuardHome() {
                             }
                         }
                     },
-                    enabled = !isBusy
+                    onEdit = {
+                        if (!isBusy && !isLoading) {
+                            TimePickerDialog(
+                                context,
+                                { _, newHour, newMinute ->
+                                    if (!isBusy) {
+                                        isBusy = true
+                                        scope.launch {
+                                            val updated = alarm.copy(
+                                                hour = newHour,
+                                                minute = newMinute
+                                            )
+                                            var scheduleChanged = false
+                                            try {
+                                                if (updated.hour == alarm.hour &&
+                                                    updated.minute == alarm.minute
+                                                ) {
+                                                    showMessage("Time unchanged")
+                                                } else {
+                                                    if (alarm.isEnabled) {
+                                                        // Same schedulerId updates the existing PendingIntent.
+                                                        val scheduled = AlarmScheduler.schedule(
+                                                            context = context,
+                                                            alarmId = alarm.schedulerId,
+                                                            hour = updated.hour,
+                                                            minute = updated.minute,
+                                                            label = updated.label
+                                                        )
+                                                        if (!scheduled) {
+                                                            showMessage("Exact alarm permission required")
+                                                            requestExactAlarmPermission()
+                                                            return@launch
+                                                        }
+                                                        scheduleChanged = true
+                                                    }
+
+                                                    repository.updateAlarm(updated)
+                                                    val index = alarms.indexOfFirst { it.id == alarm.id }
+                                                    if (index >= 0) alarms[index] = updated
+                                                    showMessage("Alarm updated")
+                                                }
+                                            } catch (e: Exception) {
+                                                if (scheduleChanged) {
+                                                    // Best-effort restore of the old pending alarm.
+                                                    try {
+                                                        AlarmScheduler.schedule(
+                                                            context = context,
+                                                            alarmId = alarm.schedulerId,
+                                                            hour = alarm.hour,
+                                                            minute = alarm.minute,
+                                                            label = alarm.label
+                                                        )
+                                                    } catch (_: Exception) { }
+                                                }
+                                                showMessage("Could not update alarm")
+                                            } finally {
+                                                isBusy = false
+                                            }
+                                        }
+                                    }
+                                },
+                                alarm.hour,
+                                alarm.minute,
+                                false
+                            ).show()
+                        }
+                    },
+                    onDelete = {
+                        if (!isBusy && !isLoading) alarmToDelete = alarm
+                    },
+                    enabled = !isBusy && !isLoading
                 )
             }
         }
@@ -511,12 +583,61 @@ fun WakeGuardHome() {
             )
         }
     }
+
+    alarmToDelete?.let { alarm ->
+        AlertDialog(
+            onDismissRequest = { if (!isBusy) alarmToDelete = null },
+            title = { Text("Delete alarm?") },
+            text = {
+                Text("Delete ${formatTime(alarm.hour, alarm.minute)}? This cannot be undone.")
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isBusy,
+                    onClick = {
+                        if (!isBusy) {
+                            isBusy = true
+                            scope.launch {
+                                try {
+                                    // Delete from Room first. Do not cancel on DB failure.
+                                    repository.deleteAlarmById(alarm.id)
+                                    AlarmScheduler.cancel(context, alarm.schedulerId)
+                                    alarms.removeAll { it.id == alarm.id }
+                                    alarmToDelete = null
+                                    showMessage("Alarm deleted")
+                                } catch (e: Exception) {
+                                    // Reload authoritative DB state if an operation fails.
+                                    try {
+                                        val saved = repository.getAllAlarms()
+                                        alarms.clear()
+                                        alarms.addAll(saved)
+                                    } catch (_: Exception) { }
+                                    alarmToDelete = null
+                                    showMessage("Could not complete deletion")
+                                } finally {
+                                    isBusy = false
+                                }
+                            }
+                        }
+                    }
+                ) { Text("Delete", color = Color(0xFFDC2626)) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isBusy,
+                    onClick = { alarmToDelete = null }
+                ) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
 fun AlarmCard(
     alarm: AlarmEntity,
     onToggle: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
     enabled: Boolean = true
 ) {
 
@@ -555,6 +676,15 @@ fun AlarmCard(
                 color = Muted,
                 fontSize = 13.sp
             )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onEdit, enabled = enabled) {
+                    Text("Edit", color = Accent)
+                }
+                TextButton(onClick = onDelete, enabled = enabled) {
+                    Text("Delete", color = Color(0xFFF87171))
+                }
+            }
         }
 
         Switch(
