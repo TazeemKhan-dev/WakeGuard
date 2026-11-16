@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.wakeguard.alarm.service.AlarmRingingService
 
 class AlarmReceiver : BroadcastReceiver() {
 
