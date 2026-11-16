@@ -1,3 +1,4 @@
+
 package com.wakeguard.alarm.domain.scheduler
 
 import android.app.AlarmManager
@@ -29,13 +30,30 @@ object AlarmScheduler {
             alarmId,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+                    PendingIntent.FLAG_IMMUTABLE
         )
     }
 
     private fun canSchedule(manager: AlarmManager): Boolean {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            manager.canScheduleExactAlarms()
+                manager.canScheduleExactAlarms()
+    }
+
+    fun isScheduled(context: Context, alarmId: Int): Boolean {
+        val intent = Intent(
+            context,
+            AlarmReceiver::class.java
+        )
+
+        val pending = PendingIntent.getBroadcast(
+            context,
+            alarmId,
+            intent,
+            PendingIntent.FLAG_NO_CREATE or
+                    PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return pending != null
     }
 
     fun schedule(
@@ -90,7 +108,7 @@ object AlarmScheduler {
             manager.setExactAndAllowWhileIdle(
                 AlarmManager.ELAPSED_REALTIME_WAKEUP,
                 SystemClock.elapsedRealtime() +
-                    minutes * 60_000L,
+                        minutes * 60_000L,
                 pendingIntent(context, alarmId, label)
             )
             true
@@ -110,7 +128,7 @@ object AlarmScheduler {
             alarmId,
             intent,
             PendingIntent.FLAG_NO_CREATE or
-                PendingIntent.FLAG_IMMUTABLE
+                    PendingIntent.FLAG_IMMUTABLE
         )
 
         if (pending != null) {
