@@ -42,6 +42,7 @@ class AlarmRingingService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var currentGeneration = 1L
     private var currentAlarmId = 0
     private var currentLabel = "Wake up!"
     private var isRinging = false
@@ -75,7 +76,8 @@ class AlarmRingingService : Service() {
                         context = this,
                         alarmId = currentAlarmId,
                         label = currentLabel,
-                        minutes = SNOOZE_MINUTES
+                        minutes = SNOOZE_MINUTES,
+                        generation = currentGeneration
                     )
 
                     if (scheduled) {
@@ -100,6 +102,9 @@ class AlarmRingingService : Service() {
                 ) ?: "Wake up!"
 
                 if (!isRinging) {
+                    currentGeneration = intent.getLongExtra(
+                        AlarmScheduler.EXTRA_GENERATION, 1L
+                    )
                     currentAlarmId = alarmId
                     currentLabel = label
 

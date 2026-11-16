@@ -1,4 +1,3 @@
-
 package com.wakeguard.alarm.receiver
 
 import android.content.BroadcastReceiver
@@ -7,107 +6,53 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import com.wakeguard.alarm.data.local.WakeGuardDatabase
+import com.wakeguard.alarm.domain.scheduler.AlarmScheduler
 import com.wakeguard.alarm.service.AlarmRingingService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
-import java.util.concurrent.CancellationException
 
 class AlarmReceiver : BroadcastReceiver() {
-
-    override fun onReceive(
-        context: Context,
-        intent: Intent
-    ) {
-        val alarmId = intent.getIntExtra("alarm_id", 0)
-
-        if (alarmId == 0) {
-            Log.w("WakeGuard", "Ignoring invalid alarm ID")
-            return
-        }
-
-        val pendingResult = goAsync()
+    override fun onReceive(context: Context, intent: Intent) {
+        val alarmId = intent.getIntExtra(AlarmScheduler.EXTRA_ALARM_ID, 0)
+        if (alarmId == 0) return
+        val generation = intent.getLongExtra(AlarmScheduler.EXTRA_GENERATION, 1L)
+        val type = intent.getStringExtra(AlarmScheduler.EXTRA_TRIGGER_TYPE)
+            ?: AlarmScheduler.TYPE_NORMAL // Legacy alarms from the previous version.
+        if (type != AlarmScheduler.TYPE_NORMAL && type != AlarmScheduler.TYPE_SNOOZE) return
+        val result = goAsync()
         val appContext = context.applicationContext
-
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Bound the work performed while the broadcast is active.
                 withTimeout(8_000L) {
-                    val dao = WakeGuardDatabase
-                        .getInstance(appContext)
-                        .alarmDao()
-
-                    // The current DAO has getAllAlarms().
-                    // Match the stable AlarmManager scheduler ID.
-                    val alarm = dao.getAllAlarms()
-                        .firstOrNull {
-                            it.schedulerId == alarmId
-                        }
-
-                    if (alarm == null) {
-                        Log.w(
-                            "WakeGuard",
-                            "Ignoring trigger for deleted alarm: $alarmId"
-                        )
+                    val alarm = WakeGuardDatabase.getInstance(appContext)
+                        .alarmDao().getAllAlarms()
+                        .firstOrNull { it.schedulerId == alarmId }
+                    if (alarm == null || !alarm.isEnabled) {
+                        Log.w("WakeGuard", "Rejected deleted/disabled alarm $alarmId")
                         return@withTimeout
                     }
-
-                    if (!alarm.isEnabled) {
-                        Log.w(
-                            "WakeGuard",
-                            "Ignoring trigger for disabled alarm: $alarmId"
-                        )
+                    if (alarm.scheduleGeneration != generation) {
+                        Log.w("WakeGuard", "Rejected stale alarm $alarmId generation $generation")
                         return@withTimeout
                     }
-
-                    val serviceIntent = Intent(
-                        appContext,
-                        AlarmRingingService::class.java
-                    ).apply {
+                    val serviceIntent = Intent(appContext, AlarmRingingService::class.java).apply {
                         action = AlarmRingingService.ACTION_START
-                        putExtra("alarm_id", alarm.schedulerId)
-                        putExtra("alarm_label", alarm.label)
+                        putExtra(AlarmScheduler.EXTRA_ALARM_ID, alarm.schedulerId)
+                        putExtra(AlarmScheduler.EXTRA_ALARM_LABEL, alarm.label)
+                        putExtra(AlarmScheduler.EXTRA_GENERATION, alarm.scheduleGeneration)
                     }
-
-                    try {
-                        if (Build.VERSION.SDK_INT >=
-                            Build.VERSION_CODES.O
-                        ) {
-                            appContext.startForegroundService(
-                                serviceIntent
-                            )
-                        } else {
-                            appContext.startService(
-                                serviceIntent
-                            )
-                        }
-
-                        Log.d(
-                            "WakeGuard",
-                            "Validated alarm trigger: $alarmId"
-                        )
-                    } catch (e: Exception) {
-                        Log.e(
-                            "WakeGuard",
-                            "Unable to start ringing service",
-                            e
-                        )
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        appContext.startForegroundService(serviceIntent)
+                    } else {
+                        appContext.startService(serviceIntent)
                     }
                 }
-            } catch (e: CancellationException) {
-                Log.w(
-                    "WakeGuard",
-                    "Alarm validation timed out: $alarmId"
-                )
             } catch (e: Exception) {
-                Log.e(
-                    "WakeGuard",
-                    "Alarm validation failed: $alarmId",
-                    e
-                )
+                Log.e("WakeGuard", "Alarm validation/delivery failed: $alarmId", e)
             } finally {
-                pendingResult.finish()
+                result.finish()
             }
         }
     }

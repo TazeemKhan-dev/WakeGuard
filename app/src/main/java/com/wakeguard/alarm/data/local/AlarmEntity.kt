@@ -1,6 +1,7 @@
 
 package com.wakeguard.alarm.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -32,5 +33,9 @@ data class AlarmEntity(
     val snoozeMinutes: Int = 5,
     val vibrationEnabled: Boolean = true,
 
-    val soundUri: String? = null
+    val soundUri: String? = null,
+
+    // Incremented when a scheduled occurrence is replaced.
+    @ColumnInfo(defaultValue = "1")
+    val scheduleGeneration: Long = 1L
 )

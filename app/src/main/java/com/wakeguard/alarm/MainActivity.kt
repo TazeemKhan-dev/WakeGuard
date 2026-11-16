@@ -242,7 +242,8 @@ fun WakeGuardHome() {
                                         alarmId = schedulerId,
                                         hour = hour,
                                         minute = minute,
-                                        label = newAlarm.label
+                                        label = newAlarm.label,
+                                        generation = newAlarm.scheduleGeneration
                                     )
 
                                 if (scheduled) {
@@ -398,51 +399,32 @@ fun WakeGuardHome() {
                             scope.launch {
                                 try {
                                     if (enabled) {
-
-                                        val scheduled =
-                                            AlarmScheduler.schedule(
-                                                context = context,
-                                                alarmId = alarm.schedulerId,
-                                                hour = alarm.hour,
-                                                minute = alarm.minute,
-                                                label = alarm.label
-                                            )
-
+                                        val updated = alarm.copy(
+                                            isEnabled = true,
+                                            scheduleGeneration = alarm.scheduleGeneration + 1L
+                                        )
+                                        repository.updateAlarm(updated)
+                                        val scheduled = AlarmScheduler.schedule(
+                                            context = context,
+                                            alarmId = updated.schedulerId,
+                                            hour = updated.hour,
+                                            minute = updated.minute,
+                                            label = updated.label,
+                                            generation = updated.scheduleGeneration
+                                        )
                                         if (!scheduled) {
-                                            showMessage(
-                                                "Exact alarm permission required"
-                                            )
+                                            repository.updateAlarm(alarm)
+                                            showMessage("Exact alarm permission required")
                                             requestExactAlarmPermission()
                                         } else {
-                                            try {
-                                                repository.updateAlarm(
-                                                    alarm.copy(
-                                                        isEnabled = true
-                                                    )
-                                                )
-
-                                                val index =
-                                                    alarms.indexOfFirst {
-                                                        it.id == alarm.id
-                                                    }
-
-                                                if (index >= 0) {
-                                                    alarms[index] =
-                                                        alarm.copy(
-                                                            isEnabled = true
-                                                        )
-                                                }
-
-                                                showMessage("Alarm enabled")
-                                            } catch (e: Exception) {
-                                                AlarmScheduler.cancel(
-                                                    context,
-                                                    alarm.schedulerId
-                                                )
-                                                throw e
-                                            }
+                                            AlarmScheduler.cancel(
+                                                context, alarm.schedulerId,
+                                                alarm.scheduleGeneration
+                                            )
+                                            val index = alarms.indexOfFirst { it.id == alarm.id }
+                                            if (index >= 0) alarms[index] = updated
+                                            showMessage("Alarm enabled")
                                         }
-
                                     } else {
 
                                         // Persist disabled state first.
@@ -454,7 +436,8 @@ fun WakeGuardHome() {
 
                                         AlarmScheduler.cancel(
                                             context,
-                                            alarm.schedulerId
+                                            alarm.schedulerId,
+                                            alarm.scheduleGeneration
                                         )
 
                                         val index =
@@ -492,49 +475,48 @@ fun WakeGuardHome() {
                                         scope.launch {
                                             val updated = alarm.copy(
                                                 hour = newHour,
-                                                minute = newMinute
+                                                minute = newMinute,
+                                                scheduleGeneration = alarm.scheduleGeneration + 1L
                                             )
-                                            var scheduleChanged = false
+                                            var persisted = false
                                             try {
-                                                if (updated.hour == alarm.hour &&
-                                                    updated.minute == alarm.minute
-                                                ) {
+                                                if (newHour == alarm.hour && newMinute == alarm.minute) {
                                                     showMessage("Time unchanged")
                                                 } else {
-                                                    if (alarm.isEnabled) {
-                                                        // Same schedulerId updates the existing PendingIntent.
+                                                    repository.updateAlarm(updated)
+                                                    persisted = true
+                                                    if (updated.isEnabled) {
                                                         val scheduled = AlarmScheduler.schedule(
                                                             context = context,
-                                                            alarmId = alarm.schedulerId,
+                                                            alarmId = updated.schedulerId,
                                                             hour = updated.hour,
                                                             minute = updated.minute,
-                                                            label = updated.label
+                                                            label = updated.label,
+                                                            generation = updated.scheduleGeneration
                                                         )
                                                         if (!scheduled) {
+                                                            repository.updateAlarm(alarm)
+                                                            persisted = false
                                                             showMessage("Exact alarm permission required")
                                                             requestExactAlarmPermission()
                                                             return@launch
                                                         }
-                                                        scheduleChanged = true
                                                     }
-
-                                                    repository.updateAlarm(updated)
+                                                    AlarmScheduler.cancel(
+                                                        context, alarm.schedulerId,
+                                                        alarm.scheduleGeneration
+                                                    )
                                                     val index = alarms.indexOfFirst { it.id == alarm.id }
                                                     if (index >= 0) alarms[index] = updated
                                                     showMessage("Alarm updated")
                                                 }
                                             } catch (e: Exception) {
-                                                if (scheduleChanged) {
-                                                    // Best-effort restore of the old pending alarm.
-                                                    try {
-                                                        AlarmScheduler.schedule(
-                                                            context = context,
-                                                            alarmId = alarm.schedulerId,
-                                                            hour = alarm.hour,
-                                                            minute = alarm.minute,
-                                                            label = alarm.label
-                                                        )
-                                                    } catch (_: Exception) { }
+                                                if (persisted) {
+                                                    try { repository.updateAlarm(alarm) } catch (_: Exception) { }
+                                                    AlarmScheduler.cancel(
+                                                        context, updated.schedulerId,
+                                                        updated.scheduleGeneration
+                                                    )
                                                 }
                                                 showMessage("Could not update alarm")
                                             } finally {
@@ -601,7 +583,7 @@ fun WakeGuardHome() {
                                 try {
                                     // Delete from Room first. Do not cancel on DB failure.
                                     repository.deleteAlarmById(alarm.id)
-                                    AlarmScheduler.cancel(context, alarm.schedulerId)
+                                    AlarmScheduler.cancel(context, alarm.schedulerId, alarm.scheduleGeneration)
                                     alarms.removeAll { it.id == alarm.id }
                                     alarmToDelete = null
                                     showMessage("Alarm deleted")
