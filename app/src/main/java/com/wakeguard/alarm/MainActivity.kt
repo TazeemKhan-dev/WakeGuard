@@ -16,6 +16,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,9 +42,9 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
 
-private val Background = Color(0xFF101827)
-private val CardColor = Color(0xFF1E293B)
-private val Accent = Color(0xFF10B981)
+private val Background = Color(0xFF151515)
+private val CardColor = Color(0xFF303030)
+private val Accent = Color(0xFF6485FF)
 private val Muted = Color(0xFF94A3B8)
 
 class MainActivity : ComponentActivity() {
@@ -84,6 +87,10 @@ fun WakeGuardHome() {
     }
 
     var alarmToDelete by remember { mutableStateOf<AlarmEntity?>(null) }
+    val selectedForDeletion = remember { mutableStateListOf<Long>() }
+    var selectionMode by remember { mutableStateOf(false) }
+    var editingAlarm by remember { mutableStateOf<AlarmEntity?>(null) }
+    var showEditor by remember { mutableStateOf(false) }
 
     fun showMessage(message: String) {
         Toast.makeText(
@@ -188,195 +195,115 @@ fun WakeGuardHome() {
             (alarmMinutes - currentMinutes + 1440) % 1440
         }
 
-    // Create and persist an alarm.
-    val timePicker = {
-        if (!isBusy && !isLoading) {
-            val now = Calendar.getInstance()
-
-            TimePickerDialog(
-                context,
-                { _, hour, minute ->
-
-                    if (!isBusy) {
-                        isBusy = true
-
-                        scope.launch {
-                            var savedAlarm: AlarmEntity? = null
-
-                            try {
-                                // Preserve the existing Int-based
-                                // AlarmManager identity.
-                                val usedIds = alarms
-                                    .map { it.schedulerId }
-                                    .toSet()
-
+    if (showEditor) {
+        AlarmEditorScreen(
+            existing = editingAlarm,
+            onCancel = { if (!isBusy) showEditor = false },
+            onSave = { hour, minute, label, repeatDays, vibrate, snooze ->
+                if (!isBusy) {
+                    isBusy = true
+                    scope.launch {
+                        val old = editingAlarm
+                        var createdId: Long? = null
+                        var updated: AlarmEntity? = null
+                        try {
+                            if (old == null) {
+                                val used = alarms.map { it.schedulerId }.toSet()
                                 var schedulerId: Int
-
-                                do {
-                                    schedulerId = UUID
-                                        .randomUUID()
-                                        .hashCode()
-                                } while (
-                                    schedulerId == 0 ||
-                                    schedulerId in usedIds
+                                do { schedulerId = UUID.randomUUID().hashCode() }
+                                while (schedulerId == 0 || schedulerId in used)
+                                val fresh = AlarmEntity(
+                                    schedulerId = schedulerId, hour = hour, minute = minute,
+                                    label = label, repeatDays = repeatDays,
+                                    vibrationEnabled = vibrate, snoozeMinutes = snooze
                                 )
-
-                                val newAlarm = AlarmEntity(
-                                    schedulerId = schedulerId,
-                                    hour = hour,
-                                    minute = minute,
-                                    label = "New Alarm",
-                                    isEnabled = true
-                                )
-
-                                val databaseId =
-                                    repository.insertAlarm(newAlarm)
-
-                                savedAlarm = newAlarm.copy(
-                                    id = databaseId
-                                )
-
-                                val scheduled =
-                                    AlarmScheduler.schedule(
-                                        context = context,
-                                        alarmId = schedulerId,
-                                        hour = hour,
-                                        minute = minute,
-                                        label = newAlarm.label,
-                                        generation = newAlarm.scheduleGeneration
-                                    )
-
-                                if (scheduled) {
-                                    alarms.add(savedAlarm)
-                                    showMessage("Alarm saved and scheduled!")
-                                } else {
-                                    repository.deleteAlarmById(databaseId)
-                                    savedAlarm = null
-                                    showMessage(
-                                        "Exact alarm permission required"
-                                    )
+                                val id = repository.insertAlarm(fresh)
+                                createdId = id
+                                val saved = fresh.copy(id = id)
+                                if (!AlarmScheduler.schedule(
+                                        context, schedulerId, hour, minute, label,
+                                        saved.scheduleGeneration, repeatDays
+                                    )) {
+                                    repository.deleteAlarmById(id)
+                                    createdId = null
+                                    showMessage("Exact alarm permission required")
                                     requestExactAlarmPermission()
+                                    return@launch
                                 }
-
-                            } catch (e: Exception) {
-                                // Remove any partially scheduled alarm.
-                                savedAlarm?.let {
-                                    AlarmScheduler.cancel(
-                                        context,
-                                        it.schedulerId
+                                alarms.add(saved)
+                            } else {
+                                val changed = old.hour != hour || old.minute != minute ||
+                                    old.label != label || old.repeatDays != repeatDays ||
+                                    old.vibrationEnabled != vibrate || old.snoozeMinutes != snooze
+                                if (changed) {
+                                    val next = old.copy(
+                                        hour = hour, minute = minute, label = label,
+                                        repeatDays = repeatDays, vibrationEnabled = vibrate,
+                                        snoozeMinutes = snooze,
+                                        scheduleGeneration = old.scheduleGeneration + 1L
                                     )
-                                    try {
-                                        repository.deleteAlarmById(it.id)
-                                    } catch (_: Exception) {
+                                    repository.updateAlarm(next)
+                                    updated = next
+                                    if (next.isEnabled && !AlarmScheduler.schedule(
+                                            context, next.schedulerId, next.hour, next.minute,
+                                            next.label, next.scheduleGeneration, next.repeatDays
+                                        )) {
+                                        repository.updateAlarm(old)
+                                        updated = null
+                                        showMessage("Exact alarm permission required")
+                                        requestExactAlarmPermission()
+                                        return@launch
                                     }
+                                    AlarmScheduler.cancel(context, old.schedulerId, old.scheduleGeneration)
+                                    val index = alarms.indexOfFirst { it.id == old.id }
+                                    if (index >= 0) alarms[index] = next
                                 }
-
-                                showMessage("Could not save alarm")
-                            } finally {
-                                isBusy = false
                             }
-                        }
+                            showEditor = false
+                            showMessage("Alarm saved")
+                        } catch (e: Exception) {
+                            createdId?.let { id ->
+                                try { repository.deleteAlarmById(id) } catch (_: Exception) { }
+                            }
+                            updated?.let { next ->
+                                try { repository.updateAlarm(old!!) } catch (_: Exception) { }
+                                AlarmScheduler.cancel(context, next.schedulerId, next.scheduleGeneration)
+                            }
+                            showMessage("Could not save alarm")
+                        } finally { isBusy = false }
                     }
-                },
-                now.get(Calendar.HOUR_OF_DAY),
-                now.get(Calendar.MINUTE),
-                false
-            ).show()
-        }
+                }
+            }
+        )
+        return
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Background)
-            .statusBarsPadding()
-            .padding(20.dp)
+        modifier = Modifier.fillMaxSize().background(Background)
+            .statusBarsPadding().padding(horizontal = 16.dp)
     ) {
-
-        Text(
-            text = "YOUR MORNING COMPANION",
-            color = Muted,
-            fontSize = 11.sp
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            text = "WakeGuard",
-            color = Color.White,
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(Modifier.height(28.dp))
-
-        // Next alarm card.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    CardColor,
-                    RoundedCornerShape(20.dp)
-                )
-                .padding(22.dp)
-        ) {
-
-            Text(
-                text = "NEXT ALARM",
-                color = Muted,
-                fontSize = 12.sp
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = if (isLoading) {
-                    "Loading..."
-                } else {
-                    nextAlarm?.let {
-                        formatTime(it.hour, it.minute)
-                    } ?: "No alarms set"
-                },
-                color = Color.White,
-                fontSize = 30.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(Modifier.height(4.dp))
-
-            Text(
-                text = if (nextAlarm != null) {
-                    "Your next scheduled time"
-                } else {
-                    "Create your first alarm"
-                },
-                color = Accent,
-                fontSize = 13.sp
-            )
-        }
-
-        Spacer(Modifier.height(30.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
+        Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-
-            Text(
-                text = "Your Alarms",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Text(
-                text = "${alarms.size} alarms",
-                color = Accent,
-                fontSize = 13.sp
-            )
+            verticalAlignment = Alignment.CenterVertically) {
+            if (selectionMode) {
+                TextButton(onClick = { selectionMode = false; selectedForDeletion.clear() }) {
+                    Text("Cancel", color = Accent)
+                }
+                Text("${selectedForDeletion.size} selected", color = Color.White,
+                    fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                TextButton(onClick = {
+                    selectedForDeletion.clear()
+                    selectedForDeletion.addAll(alarms.map { it.id })
+                }) { Text("Select all", color = Accent) }
+            } else {
+                Column {
+                    Text("Alarm", color = Color.White, fontSize = 34.sp,
+                        fontWeight = FontWeight.Bold)
+                    Text(nextAlarm?.let { "Next alarm ${formatTime(it.hour, it.minute)}" }
+                        ?: "No alarms set", color = Muted, fontSize = 13.sp)
+                }
+            }
         }
-
         Spacer(Modifier.height(16.dp))
 
         LazyColumn(
@@ -410,7 +337,8 @@ fun WakeGuardHome() {
                                             hour = updated.hour,
                                             minute = updated.minute,
                                             label = updated.label,
-                                            generation = updated.scheduleGeneration
+                                            generation = updated.scheduleGeneration,
+                                            repeatDays = updated.repeatDays
                                         )
                                         if (!scheduled) {
                                             repository.updateAlarm(alarm)
@@ -467,102 +395,45 @@ fun WakeGuardHome() {
                     },
                     onEdit = {
                         if (!isBusy && !isLoading) {
-                            TimePickerDialog(
-                                context,
-                                { _, newHour, newMinute ->
-                                    if (!isBusy) {
-                                        isBusy = true
-                                        scope.launch {
-                                            val updated = alarm.copy(
-                                                hour = newHour,
-                                                minute = newMinute,
-                                                scheduleGeneration = alarm.scheduleGeneration + 1L
-                                            )
-                                            var persisted = false
-                                            try {
-                                                if (newHour == alarm.hour && newMinute == alarm.minute) {
-                                                    showMessage("Time unchanged")
-                                                } else {
-                                                    repository.updateAlarm(updated)
-                                                    persisted = true
-                                                    if (updated.isEnabled) {
-                                                        val scheduled = AlarmScheduler.schedule(
-                                                            context = context,
-                                                            alarmId = updated.schedulerId,
-                                                            hour = updated.hour,
-                                                            minute = updated.minute,
-                                                            label = updated.label,
-                                                            generation = updated.scheduleGeneration
-                                                        )
-                                                        if (!scheduled) {
-                                                            repository.updateAlarm(alarm)
-                                                            persisted = false
-                                                            showMessage("Exact alarm permission required")
-                                                            requestExactAlarmPermission()
-                                                            return@launch
-                                                        }
-                                                    }
-                                                    AlarmScheduler.cancel(
-                                                        context, alarm.schedulerId,
-                                                        alarm.scheduleGeneration
-                                                    )
-                                                    val index = alarms.indexOfFirst { it.id == alarm.id }
-                                                    if (index >= 0) alarms[index] = updated
-                                                    showMessage("Alarm updated")
-                                                }
-                                            } catch (e: Exception) {
-                                                if (persisted) {
-                                                    try { repository.updateAlarm(alarm) } catch (_: Exception) { }
-                                                    AlarmScheduler.cancel(
-                                                        context, updated.schedulerId,
-                                                        updated.scheduleGeneration
-                                                    )
-                                                }
-                                                showMessage("Could not update alarm")
-                                            } finally {
-                                                isBusy = false
-                                            }
-                                        }
-                                    }
-                                },
-                                alarm.hour,
-                                alarm.minute,
-                                false
-                            ).show()
+                            editingAlarm = alarm
+                            showEditor = true
                         }
                     },
-                    onDelete = {
-                        if (!isBusy && !isLoading) alarmToDelete = alarm
+                    selected = alarm.id in selectedForDeletion,
+                    selectionMode = selectionMode,
+                    onLongPress = {
+                        if (!isBusy && !isLoading) {
+                            selectionMode = true
+                            if (alarm.id !in selectedForDeletion) selectedForDeletion.add(alarm.id)
+                        }
+                    },
+                    onSelect = {
+                        if (alarm.id in selectedForDeletion) selectedForDeletion.remove(alarm.id)
+                        else selectedForDeletion.add(alarm.id)
                     },
                     enabled = !isBusy && !isLoading
                 )
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        Button(
-            onClick = timePicker,
-            enabled = !isBusy && !isLoading,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(58.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Accent
-            ),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-
-            Text(
-                text = if (isLoading) {
-                    "Loading..."
-                } else {
-                    "+  Add New Alarm"
-                },
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
+        Spacer(Modifier.height(12.dp))
+        if (selectionMode) {
+            Button(onClick = {
+                if (selectedForDeletion.isNotEmpty()) {
+                    alarmToDelete = alarms.firstOrNull { it.id in selectedForDeletion }
+                }
+            }, enabled = selectedForDeletion.isNotEmpty() && !isBusy,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3261E))) {
+                Text("Delete ${selectedForDeletion.size} selected alarms")
+            }
+        } else {
+            Box(Modifier.fillMaxWidth().padding(bottom = 16.dp), contentAlignment = Alignment.Center) {
+                FloatingActionButton(onClick = { editingAlarm = null; showEditor = true },
+                    containerColor = Accent) {
+                    Text("+", fontSize = 34.sp, color = Color.White)
+                }
+            }
         }
     }
 
@@ -571,7 +442,7 @@ fun WakeGuardHome() {
             onDismissRequest = { if (!isBusy) alarmToDelete = null },
             title = { Text("Delete alarm?") },
             text = {
-                Text("Delete ${formatTime(alarm.hour, alarm.minute)}? This cannot be undone.")
+                Text("Delete ${if (selectionMode) selectedForDeletion.size.toString() + " selected alarms" else formatTime(alarm.hour, alarm.minute)}? This cannot be undone.")
             },
             confirmButton = {
                 TextButton(
@@ -582,9 +453,15 @@ fun WakeGuardHome() {
                             scope.launch {
                                 try {
                                     // Delete from Room first. Do not cancel on DB failure.
-                                    repository.deleteAlarmById(alarm.id)
-                                    AlarmScheduler.cancel(context, alarm.schedulerId, alarm.scheduleGeneration)
-                                    alarms.removeAll { it.id == alarm.id }
+                                    val targets = if (selectionMode) alarms.filter { it.id in selectedForDeletion }
+                                        else listOf(alarm)
+                                    targets.forEach { target ->
+                                        repository.deleteAlarmById(target.id)
+                                        AlarmScheduler.cancel(context, target.schedulerId, target.scheduleGeneration)
+                                    }
+                                    alarms.removeAll { item -> targets.any { it.id == item.id } }
+                                    selectedForDeletion.clear()
+                                    selectionMode = false
                                     alarmToDelete = null
                                     showMessage("Alarm deleted")
                                 } catch (e: Exception) {
@@ -614,70 +491,46 @@ fun WakeGuardHome() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AlarmCard(
     alarm: AlarmEntity,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onLongPress: () -> Unit,
+    onSelect: () -> Unit,
     enabled: Boolean = true
 ) {
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                CardColor,
-                RoundedCornerShape(18.dp)
-            )
-            .padding(18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp)
+            .background(CardColor, RoundedCornerShape(16.dp))
+            .combinedClickable(enabled = enabled,
+                onClick = { if (selectionMode) onSelect() else onEdit() },
+                onLongClick = onLongPress)
+            .padding(horizontal = 16.dp, vertical = 20.dp)
     ) {
-
-        Column {
-
-            Text(
-                text = formatTime(
-                    alarm.hour,
-                    alarm.minute
-                ),
-                color = if (alarm.isEnabled) {
-                    Color.White
-                } else {
-                    Muted
-                },
-                fontSize = 27.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(Modifier.height(6.dp))
-
-            Text(
-                text = alarm.label,
-                color = Muted,
-                fontSize = 13.sp
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onEdit, enabled = enabled) {
-                    Text("Edit", color = Accent)
-                }
-                TextButton(onClick = onDelete, enabled = enabled) {
-                    Text("Delete", color = Color(0xFFF87171))
-                }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(alarm.hour, alarm.minute), fontSize = 31.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (alarm.isEnabled) Color.White else Color.Gray)
+            if (selectionMode) {
+                Checkbox(checked = selected, onCheckedChange = { onSelect() })
+            } else {
+                Switch(checked = alarm.isEnabled, onCheckedChange = onToggle, enabled = enabled,
+                    colors = SwitchDefaults.colors(checkedTrackColor = Accent))
             }
         }
-
-        Switch(
-            checked = alarm.isEnabled,
-            onCheckedChange = onToggle,
-            enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = Accent
-            )
-        )
+        Spacer(Modifier.height(4.dp))
+        Text(when (alarm.repeatDays) {
+            "" -> "Ring once"
+            "1,2,3,4,5,6,7" -> "Every day"
+            "2,3,4,5,6" -> "Weekdays"
+            "1,7" -> "Weekends"
+            else -> "Custom repeat"
+        }, color = Muted, fontSize = 13.sp)
     }
 }
 

@@ -44,7 +44,7 @@ object AlarmScheduler {
 
     fun schedule(
         context: Context, alarmId: Int, hour: Int, minute: Int,
-        label: String, generation: Long = 1L
+        label: String, generation: Long = 1L, repeatDays: String = ""
     ): Boolean {
         val alarmManager = manager(context)
         if (!canSchedule(alarmManager)) return false
@@ -54,6 +54,16 @@ object AlarmScheduler {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
             if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+            if (repeatDays.isNotBlank()) {
+                val allowed = repeatDays.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
+                if (allowed.isNotEmpty()) {
+                    var attempts = 0
+                    while (get(Calendar.DAY_OF_WEEK) !in allowed && attempts < 7) {
+                        add(Calendar.DAY_OF_YEAR, 1)
+                        attempts++
+                    }
+                }
+            }
         }
         return try {
             alarmManager.setExactAndAllowWhileIdle(

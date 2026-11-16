@@ -37,11 +37,24 @@ class AlarmReceiver : BroadcastReceiver() {
                         Log.w("WakeGuard", "Rejected stale alarm $alarmId generation $generation")
                         return@withTimeout
                     }
+                    // Re-arm recurring alarms before ringing. One-time alarms remain one-shot.
+                    // A generation-aware PendingIntent ensures the next occurrence is distinct.
+                    if (type == AlarmScheduler.TYPE_NORMAL && alarm.repeatDays.isNotBlank()) {
+                        val rescheduled = AlarmScheduler.schedule(
+                            appContext, alarm.schedulerId, alarm.hour, alarm.minute,
+                            alarm.label, alarm.scheduleGeneration, alarm.repeatDays
+                        )
+                        if (!rescheduled) {
+                            Log.e("WakeGuard", "Could not schedule next repeat: $alarmId")
+                        }
+                    }
                     val serviceIntent = Intent(appContext, AlarmRingingService::class.java).apply {
                         action = AlarmRingingService.ACTION_START
                         putExtra(AlarmScheduler.EXTRA_ALARM_ID, alarm.schedulerId)
                         putExtra(AlarmScheduler.EXTRA_ALARM_LABEL, alarm.label)
                         putExtra(AlarmScheduler.EXTRA_GENERATION, alarm.scheduleGeneration)
+                        putExtra("snooze_minutes", alarm.snoozeMinutes)
+                        putExtra("vibration_enabled", alarm.vibrationEnabled)
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         appContext.startForegroundService(serviceIntent)

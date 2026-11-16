@@ -45,6 +45,8 @@ class AlarmRingingService : Service() {
     private var currentGeneration = 1L
     private var currentAlarmId = 0
     private var currentLabel = "Wake up!"
+    private var currentSnoozeMinutes = 5
+    private var currentVibrationEnabled = true
     private var isRinging = false
 
     private val timeoutRunnable = Runnable {
@@ -76,7 +78,7 @@ class AlarmRingingService : Service() {
                         context = this,
                         alarmId = currentAlarmId,
                         label = currentLabel,
-                        minutes = SNOOZE_MINUTES,
+                        minutes = currentSnoozeMinutes,
                         generation = currentGeneration
                     )
 
@@ -107,6 +109,8 @@ class AlarmRingingService : Service() {
                     )
                     currentAlarmId = alarmId
                     currentLabel = label
+                    currentSnoozeMinutes = intent.getIntExtra("snooze_minutes", 5).coerceIn(1, 60)
+                    currentVibrationEnabled = intent.getBooleanExtra("vibration_enabled", true)
 
                     startRinging()
                 } else {
@@ -140,7 +144,7 @@ class AlarmRingingService : Service() {
         }
 
         startSound()
-        startVibration()
+        if (currentVibrationEnabled) startVibration()
 
         handler.removeCallbacks(timeoutRunnable)
         handler.postDelayed(
