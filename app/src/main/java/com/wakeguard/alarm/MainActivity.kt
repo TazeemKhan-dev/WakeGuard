@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,6 +26,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import com.wakeguard.alarm.ui.theme.AlarmScreenTheme
+import com.wakeguard.alarm.ui.theme.ThemeMode
+import com.wakeguard.alarm.ui.theme.ThemePreferences
+import com.wakeguard.alarm.ui.theme.WakeGuardTheme
+import com.wakeguard.alarm.ui.theme.WakeGuardColors as W
+import com.wakeguard.alarm.ui.settings.SettingsScreen
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,26 +49,40 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
 
-private val Background = Color(0xFF071126)
-private val CardColor = Color(0xFF14213C)
-private val Accent = Color(0xFF6485FF)
-private val Muted = Color(0xFF94A3B8)
+private val Background get() = W.background
+private val CardColor get() = W.card
+private val Accent get() = W.primary
+private val Muted get() = W.secondary
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val preferences = ThemePreferences(applicationContext)
         setContent {
-            MaterialTheme {
-                WakeGuardHome()
+            val scope = rememberCoroutineScope()
+            val selectedMode by preferences.mode.collectAsState(initial = ThemeMode.SYSTEM)
+            val selectedAlarmMode by preferences.alarmScreenMode.collectAsState(initial = AlarmScreenTheme.DARK)
+            WakeGuardTheme(selectedMode) {
+                WakeGuardHome(
+                    themeMode = selectedMode,
+                    onThemeChange = { newMode -> scope.launch { preferences.setMode(newMode) } },
+                    alarmScreenMode = selectedAlarmMode,
+                    onAlarmScreenThemeChange = { newMode -> scope.launch { preferences.setAlarmScreenMode(newMode) } }
+                )
             }
         }
     }
 }
 
 @Composable
-fun WakeGuardHome() {
+fun WakeGuardHome(
+    themeMode: ThemeMode,
+    onThemeChange: (ThemeMode) -> Unit,
+    alarmScreenMode: AlarmScreenTheme,
+    onAlarmScreenThemeChange: (AlarmScreenTheme) -> Unit
+) {
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -91,6 +112,7 @@ fun WakeGuardHome() {
     var selectionMode by remember { mutableStateOf(false) }
     var editingAlarm by remember { mutableStateOf<AlarmEntity?>(null) }
     var showEditor by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
     fun showMessage(message: String) {
         Toast.makeText(
@@ -195,6 +217,27 @@ fun WakeGuardHome() {
             (alarmMinutes - currentMinutes + 1440) % 1440
         }
 
+    BackHandler(enabled = showSettings || showEditor) {
+        when {
+            showSettings -> showSettings = false
+            showEditor && !isBusy -> {
+                showEditor = false
+                editingAlarm = null
+            }
+        }
+    }
+
+    if (showSettings) {
+        SettingsScreen(
+            mode = themeMode,
+            onModeChange = onThemeChange,
+            alarmMode = alarmScreenMode,
+            onAlarmModeChange = onAlarmScreenThemeChange,
+            onBack = { showSettings = false }
+        )
+        return
+    }
+
     if (showEditor) {
         AlarmEditorScreen(
             existing = editingAlarm,
@@ -295,18 +338,21 @@ fun WakeGuardHome() {
                 TextButton(onClick = { selectionMode = false; selectedForDeletion.clear() }) {
                     Text("Cancel", color = Accent)
                 }
-                Text("${selectedForDeletion.size} selected", color = Color.White,
+                Text("${selectedForDeletion.size} selected", color = W.text,
                     fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 TextButton(onClick = {
                     selectedForDeletion.clear()
                     selectedForDeletion.addAll(alarms.map { it.id })
                 }) { Text("Select all", color = Accent) }
             } else {
-                Column {
-                    Text("Alarm", color = Color.White, fontSize = 34.sp,
+                Column(Modifier.weight(1f)) {
+                    Text("Alarm", color = W.text, fontSize = 34.sp,
                         fontWeight = FontWeight.Bold)
                     Text(nextAlarm?.let { "Next alarm ${formatTime(it.hour, it.minute)}" }
                         ?: "No alarms set", color = Muted, fontSize = 13.sp)
+                }
+                IconButton(onClick = { showSettings = true }) {
+                    Text("⚙", fontSize = 27.sp, color = W.primary)
                 }
             }
         }
@@ -521,17 +567,17 @@ fun AlarmCard(
             horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatTime(alarm.hour, alarm.minute), fontSize = 31.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (alarm.isEnabled) Color.White else Color.Gray)
+                color = if (alarm.isEnabled) W.text else W.secondary)
             if (selectionMode) {
                 Checkbox(checked = selected, onCheckedChange = { onSelect() })
             } else {
                 Switch(checked = alarm.isEnabled, onCheckedChange = onToggle, enabled = enabled,
-                    colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+                    colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = Color.White))
             }
         }
         Spacer(Modifier.height(4.dp))
         if (alarm.label.isNotBlank() && alarm.label != "New Alarm") {
-            Text(alarm.label, color = Color(0xFFD8E2FF), fontSize = 14.sp,
+            Text(alarm.label, color = W.text, fontSize = 14.sp,
                 fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(5.dp))
         }

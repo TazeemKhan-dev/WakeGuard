@@ -30,7 +30,7 @@ class AlarmRingActivity : ComponentActivity() {
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
 
-        val label = intent.getStringExtra("alarm_label") ?: "Alarm"
+        val label = intent.getStringExtra("alarm_label") ?: ""
 
         val snoozeMinutes = intent
             .getIntExtra("snooze_minutes", 5)

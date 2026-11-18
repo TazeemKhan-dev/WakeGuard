@@ -16,13 +16,14 @@ fun ChallengeRouter(
     onSnooze: () -> Unit,
     onExitPreview: () -> Unit
 ) {
+    val displayLabel = label.trim().takeUnless { it == "New Alarm" || it == "Preview alarm" || it == "Alarm" }.orEmpty()
     when (challengeType) {
-        "MATH" -> MathChallengeScreen(label, snoozeMinutes, mathDifficulty,
+        "MATH" -> MathChallengeScreen(displayLabel, snoozeMinutes, mathDifficulty,
             mathQuestionCount, previewMode, onDismiss, onSnooze, onExitPreview)
-        "SHAKE" -> ShakeChallengeScreen(label, snoozeMinutes, shakeCount,
+        "SHAKE" -> ShakeChallengeScreen(displayLabel, snoozeMinutes, shakeCount,
             previewMode, onDismiss, onSnooze, onExitPreview)
         else -> AlarmRingScreen(
-            label = if (previewMode) "Preview: $label" else label,
+            label = displayLabel,
             snoozeMinutes = snoozeMinutes,
             onDismiss = onDismiss,
             onSnooze = onSnooze

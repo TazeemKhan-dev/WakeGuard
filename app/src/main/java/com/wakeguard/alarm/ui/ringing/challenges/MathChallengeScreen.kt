@@ -56,15 +56,15 @@ fun MathChallengeScreen(
         Spacer(Modifier.height(12.dp))
         LinearProgressIndicator(progress = { solved.toFloat() / total },
             modifier = Modifier.fillMaxWidth().height(5.dp),
-            color = Lilac, trackColor = Color(0xFF27385E))
+            color = Lilac, trackColor = ProgressTrack)
         Spacer(Modifier.height(26.dp))
         Box(Modifier.fillMaxWidth().height(155.dp)
-            .background(Color(0xFF162B54), RoundedCornerShape(24.dp)),
+            .background(Panel, RoundedCornerShape(24.dp)),
             contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Solve this", color = MutedText, fontSize = 15.sp)
                 Spacer(Modifier.height(14.dp))
-                Text("${problem.expression} = ?", color = Color.White,
+                Text("${problem.expression} = ?", color = Ink,
                     fontSize = 40.sp, fontWeight = FontWeight.Bold)
             }
         }
@@ -73,7 +73,7 @@ fun MathChallengeScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { option ->
                     Box(Modifier.weight(1f).height(76.dp)
-                        .background(Color(0xFF192E55), RoundedCornerShape(18.dp))
+                        .background(Panel, RoundedCornerShape(18.dp))
                         .clickable {
                             if (option == problem.answer) {
                                 incorrect = false
@@ -81,13 +81,13 @@ fun MathChallengeScreen(
                                 else { solved++; problem = generateProblem(difficulty) }
                             } else incorrect = true
                         }, contentAlignment = Alignment.Center) {
-                        Text("$option", color = Color.White, fontSize = 26.sp,
+                        Text("$option", color = Ink, fontSize = 26.sp,
                             fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
             Spacer(Modifier.height(12.dp))
         }
-        if (incorrect) Text("Not quite — try another answer", color = Color(0xFFFFB7B7))
+        if (incorrect) Text("Not quite — try another answer", color = Color(0xFFBD3C4B))
     }
 }

@@ -1,6 +1,7 @@
 package com.wakeguard.alarm
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalContext
 import com.wakeguard.alarm.ui.ringing.AlarmRingActivity
 import androidx.compose.foundation.background
@@ -14,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import com.wakeguard.alarm.ui.theme.WakeGuardColors as W
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,10 +28,10 @@ import com.wakeguard.alarm.data.local.AlarmEntity
 import java.util.Calendar
 import kotlin.math.abs
 
-private val bg = Color(0xFF071126)
-private val panel = Color(0xFF14213C)
-private val blue = Color(0xFF6485FF)
-private val muted = Color(0xFFB2BFDA)
+private val bg get() = W.background
+private val panel get() = W.card
+private val blue get() = W.primary
+private val muted get() = W.secondary
 private val allDays = (1..7).toSet()
 private val weekdays = setOf(2, 3, 4, 5, 6)
 private val weekends = setOf(1, 7)
@@ -65,7 +67,7 @@ private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, mo
                 }
             }
             Box(Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
-                Text(value, color = if (selected) Color.White else Color.Gray,
+                Text(value, color = if (selected) W.text else W.secondary,
                     fontSize = if (selected) 27.sp else 18.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             }
@@ -100,6 +102,16 @@ fun AlarmEditorScreen(
     }
     var snoozeScreen by remember { mutableStateOf(false) }
     var challengeScreen by remember { mutableStateOf(false) }
+
+    // Consume Android system Back inside nested editor pages before MainActivity
+    // can close the entire editor. Preview is a separate Activity, so Android
+    // returns to this challenge settings page when that Activity finishes.
+    BackHandler(enabled = challengeScreen || snoozeScreen) {
+        when {
+            challengeScreen -> challengeScreen = false
+            snoozeScreen -> snoozeScreen = false
+        }
+    }
     val period = if (hour < 12) 0 else 1
     val displayHour = (hour % 12).let { if (it == 0) 12 else it }
     val repeatDescription = when {
@@ -124,7 +136,7 @@ fun AlarmEditorScreen(
             onPreview = {
                 context.startActivity(Intent(context, AlarmRingActivity::class.java).apply {
                     putExtra("preview_mode", true)
-                    putExtra("alarm_label", label.ifBlank { "Preview alarm" })
+                    putExtra("alarm_label", label.trim())
                     putExtra("snooze_minutes", snoozeMinutes)
                     putExtra("challenge_type", challenge)
                     putExtra("math_difficulty", difficulty)
@@ -142,7 +154,7 @@ fun AlarmEditorScreen(
             TextButton(onClick = { snoozeScreen = false }) { Text("‹  Snooze", color = blue, fontSize = 19.sp) }
             Spacer(Modifier.height(22.dp))
             Column(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(16.dp)).padding(18.dp)) {
-                Text("Interval", color = Color.White, fontSize = 17.sp)
+                Text("Interval", color = W.text, fontSize = 17.sp)
                 Text("Scroll to choose minutes", color = muted, fontSize = 12.sp)
                 Wheel((1..60).map { "$it min" }, (snoozeMinutes - 1).coerceIn(0, 59),
                     onValue = { snoozeMinutes = it + 1 }, modifier = Modifier.fillMaxWidth())
@@ -162,7 +174,7 @@ fun AlarmEditorScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = onCancel) { Text("Cancel", color = blue) }
-            Text(if (existing == null) "New alarm" else "Edit alarm", color = Color.White,
+            Text(if (existing == null) "New alarm" else "Edit alarm", color = W.text,
                 fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
             TextButton(onClick = {
                 onSave(hour, minute, label.ifBlank { "New Alarm" },
@@ -200,24 +212,24 @@ fun AlarmEditorScreen(
                             if (selectedDays.isEmpty()) selectedDays = weekdays
                         } else { custom = false; selectedDays = days }
                     }.padding(vertical = 11.dp), contentAlignment = Alignment.Center) {
-                        Text(name, color = Color.White, fontSize = 10.sp, maxLines = 1)
+                        Text(name, color = if (active) Color.White else W.text, fontSize = 10.sp, maxLines = 1)
                     }
                 }
             }
             if (custom) {
                 Column(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(16.dp)).padding(16.dp)) {
-                    Text("Repeat", color = Color.White, fontSize = 16.sp)
+                    Text("Repeat", color = W.text, fontSize = 16.sp)
                     Spacer(Modifier.height(5.dp))
                     Text(repeatDescription, color = blue, fontSize = 13.sp)
                     Spacer(Modifier.height(18.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         listOf("S", "M", "T", "W", "T", "F", "S").forEachIndexed { i, name ->
                             val day = i + 1
-                            Box(Modifier.size(37.dp).background(if (day in selectedDays) blue else Color(0xFF484848),
+                            Box(Modifier.size(37.dp).background(if (day in selectedDays) blue else W.subtle,
                                 RoundedCornerShape(50)).clickable {
                                 selectedDays = if (day in selectedDays) selectedDays - day else selectedDays + day
                             }, contentAlignment = Alignment.Center) {
-                                Text(name, color = Color.White, fontSize = 13.sp)
+                                Text(name, color = if (day in selectedDays) Color.White else W.text, fontSize = 13.sp)
                             }
                         }
                     }
@@ -231,7 +243,7 @@ fun AlarmEditorScreen(
                 Text("◎", color = blue, fontSize = 27.sp)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Dismissal method", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Dismissal method", color = W.text, fontWeight = FontWeight.SemiBold)
                     Text(when (challenge) {
                         "MATH" -> "Math · ${difficulty.lowercase()} · $questionCount questions"
                         "SHAKE" -> "Shake · $shakeCount movements"
@@ -249,56 +261,56 @@ fun AlarmEditorScreen(
                     Text("✎", color = blue, fontSize = 22.sp)
                     Spacer(Modifier.width(12.dp))
                     Column {
-                        Text("Alarm name", color = Color.White,
+                        Text("Alarm name", color = W.text,
                             fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                         Text("Give this alarm a name (optional)",
-                            color = Color(0xFFB2BFDA), fontSize = 12.sp)
+                            color = W.secondary, fontSize = 12.sp)
                     }
                 }
                 Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    placeholder = { Text("e.g. Morning workout", color = Color(0xFF9CAAC5)) },
+                    placeholder = { Text("e.g. Morning workout", color = W.secondary) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
+                        focusedTextColor = W.text,
+                        unfocusedTextColor = W.text,
                         cursorColor = blue,
                         focusedBorderColor = blue,
-                        unfocusedBorderColor = Color(0xFF405273),
-                        focusedContainerColor = Color(0xFF0B1830),
-                        unfocusedContainerColor = Color(0xFF0B1830)
+                        unfocusedBorderColor = W.outline,
+                        focusedContainerColor = W.subtle,
+                        unfocusedContainerColor = W.subtle
                     )
                 )
             }
             Column(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(18.dp)).padding(16.dp)) {
-                Text("Alarm options", color = Color.White,
+                Text("Alarm options", color = W.text,
                     fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                HorizontalDivider(Modifier.padding(top = 12.dp), color = Color(0xFF35445F))
+                HorizontalDivider(Modifier.padding(top = 12.dp), color = W.outline)
                 Row(Modifier.fillMaxWidth().padding(vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
-                        Text("Ringtone", color = Color.White)
+                        Text("Ringtone", color = W.text)
                         Text("Default · picker coming in engine update", color = muted, fontSize = 12.sp)
                     }
                 }
-                HorizontalDivider(color = Color(0xFF35445F))
+                HorizontalDivider(color = W.outline)
                 Row(Modifier.fillMaxWidth().padding(vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Vibrate", color = Color.White)
+                    Text("Vibrate", color = W.text)
                     Switch(checked = vibration, onCheckedChange = { vibration = it })
                 }
-                HorizontalDivider(color = Color(0xFF35445F))
+                HorizontalDivider(color = W.outline)
                 Row(Modifier.fillMaxWidth().clickable { snoozeScreen = true }.padding(vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
-                        Text("Snooze", color = Color.White)
+                        Text("Snooze", color = W.text)
                         Text("$snoozeMinutes minutes", color = muted, fontSize = 12.sp)
                     }
                     Text("›", color = muted, fontSize = 24.sp)
@@ -317,17 +329,17 @@ private fun ChallengeSettingsScreen(
     shakeCount: Int, onShakeCountChange: (Int) -> Unit,
     onPreview: () -> Unit, onBack: () -> Unit
 ) {
-    val purple = Color(0xFF9D71F8)
+    val purple = W.primary
     Column(Modifier.fillMaxSize().background(bg).statusBarsPadding().padding(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("‹ Back", color = blue) }
             Spacer(Modifier.weight(1f))
-            Text("Dismissal method", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            Text("Dismissal method", color = W.text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.width(54.dp))
         }
         Spacer(Modifier.height(18.dp))
-        Text("How would you like to stop your alarm?", color = Color.White, fontSize = 17.sp)
+        Text("How would you like to stop your alarm?", color = W.text, fontSize = 17.sp)
         Text("Try a preview before saving your alarm.", color = muted, fontSize = 13.sp)
         Spacer(Modifier.height(20.dp))
         listOf(
@@ -337,38 +349,38 @@ private fun ChallengeSettingsScreen(
         ).forEach { (method, symbol, description) ->
             val active = challenge == method
             Row(Modifier.fillMaxWidth().padding(bottom = 10.dp)
-                .background(if (active) Color(0xFF23336A) else panel, RoundedCornerShape(17.dp))
+                .background(if (active) W.selected else panel, RoundedCornerShape(17.dp))
                 .clickable { onChallengeChange(method) }.padding(18.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Text(symbol, fontSize = 30.sp, color = if (active) purple else blue)
+                Text(symbol, fontSize = 30.sp, color = if (active) blue else W.secondary)
                 Spacer(Modifier.width(17.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(method.lowercase().replaceFirstChar { it.uppercase() }, color = Color.White,
+                    Text(method.lowercase().replaceFirstChar { it.uppercase() }, color = W.text,
                         fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Text(description, color = muted, fontSize = 12.sp)
                 }
-                if (active) Text("✓", color = Color(0xFF86AAFF), fontSize = 23.sp)
+                if (active) Text("✓", color = W.primary, fontSize = 23.sp)
             }
         }
         if (challenge == "MATH") {
             Spacer(Modifier.height(8.dp))
-            Text("Difficulty", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Difficulty", color = W.text, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("EASY", "MEDIUM", "HARD").forEach { level ->
                     FilterChip(selected = difficulty == level, onClick = { onDifficultyChange(level) },
                         label = { Text(level.lowercase().replaceFirstChar { it.uppercase() }) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = blue, selectedLabelColor = Color.White,
-                            labelColor = Color.White))
+                            labelColor = W.text))
                 }
             }
-            Text("Questions: $questionCount", color = Color.White)
+            Text("Questions: $questionCount", color = W.text)
             Slider(value = questionCount.toFloat(), onValueChange = { onQuestionCountChange(it.toInt().coerceIn(1,10)) },
                 valueRange = 1f..10f, steps = 8)
         }
         if (challenge == "SHAKE") {
             Spacer(Modifier.height(8.dp))
-            Text("Required movements: $shakeCount", color = Color.White)
+            Text("Required movements: $shakeCount", color = W.text)
             Slider(value = shakeCount.toFloat(), onValueChange = { onShakeCountChange(it.toInt().coerceIn(1,30)) },
                 valueRange = 1f..30f, steps = 28)
         }
@@ -377,6 +389,6 @@ private fun ChallengeSettingsScreen(
             colors = ButtonDefaults.buttonColors(containerColor = blue),
             shape = RoundedCornerShape(28.dp)) { Text("▶  Try preview", color = Color.White) }
         Spacer(Modifier.height(10.dp))
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Continue", color = Color.White) }
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Continue", color = blue) }
     }
 }
