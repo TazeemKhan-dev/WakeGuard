@@ -37,5 +37,17 @@ data class AlarmEntity(
 
     // Incremented when a scheduled occurrence is replaced.
     @ColumnInfo(defaultValue = "1")
-    val scheduleGeneration: Long = 1L
+    val scheduleGeneration: Long = 1L,
+
+    @ColumnInfo(defaultValue = "'SWIPE'")
+    val challengeType: String = "SWIPE",
+
+    @ColumnInfo(defaultValue = "'EASY'")
+    val mathDifficulty: String = "EASY",
+
+    @ColumnInfo(defaultValue = "3")
+    val mathQuestionCount: Int = 3,
+
+    @ColumnInfo(defaultValue = "10")
+    val shakeCount: Int = 10
 )

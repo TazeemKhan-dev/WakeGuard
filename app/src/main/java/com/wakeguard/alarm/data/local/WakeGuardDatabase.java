@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
 
 @Database(
         entities = {AlarmEntity.class},
-        version = 2,
+        version = 3,
         exportSchema = false
 )
 public abstract class WakeGuardDatabase extends RoomDatabase {
@@ -36,6 +36,16 @@ public abstract class WakeGuardDatabase extends RoomDatabase {
                 }
             };
 
+    private static final Migration MIGRATION_2_3 = new Migration(2, 3) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE alarms ADD COLUMN challengeType TEXT NOT NULL DEFAULT 'SWIPE'");
+            database.execSQL("ALTER TABLE alarms ADD COLUMN mathDifficulty TEXT NOT NULL DEFAULT 'EASY'");
+            database.execSQL("ALTER TABLE alarms ADD COLUMN mathQuestionCount INTEGER NOT NULL DEFAULT 3");
+            database.execSQL("ALTER TABLE alarms ADD COLUMN shakeCount INTEGER NOT NULL DEFAULT 10");
+        }
+    };
+
     public static WakeGuardDatabase getInstance(
             Context context
     ) {
@@ -47,7 +57,7 @@ public abstract class WakeGuardDatabase extends RoomDatabase {
                                     WakeGuardDatabase.class,
                                     "wakeguard_database"
                             )
-                            .addMigrations(MIGRATION_1_2)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                             .build();
                 }
             }

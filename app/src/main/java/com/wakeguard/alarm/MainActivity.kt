@@ -42,8 +42,8 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
 
-private val Background = Color(0xFF151515)
-private val CardColor = Color(0xFF303030)
+private val Background = Color(0xFF071126)
+private val CardColor = Color(0xFF14213C)
 private val Accent = Color(0xFF6485FF)
 private val Muted = Color(0xFF94A3B8)
 
@@ -199,7 +199,7 @@ fun WakeGuardHome() {
         AlarmEditorScreen(
             existing = editingAlarm,
             onCancel = { if (!isBusy) showEditor = false },
-            onSave = { hour, minute, label, repeatDays, vibrate, snooze ->
+            onSave = { hour, minute, label, repeatDays, vibrate, snooze, challenge, difficulty, questions, shakes ->
                 if (!isBusy) {
                     isBusy = true
                     scope.launch {
@@ -215,7 +215,9 @@ fun WakeGuardHome() {
                                 val fresh = AlarmEntity(
                                     schedulerId = schedulerId, hour = hour, minute = minute,
                                     label = label, repeatDays = repeatDays,
-                                    vibrationEnabled = vibrate, snoozeMinutes = snooze
+                                    vibrationEnabled = vibrate, snoozeMinutes = snooze,
+                                    challengeType = challenge, mathDifficulty = difficulty,
+                                    mathQuestionCount = questions, shakeCount = shakes
                                 )
                                 val id = repository.insertAlarm(fresh)
                                 createdId = id
@@ -234,12 +236,16 @@ fun WakeGuardHome() {
                             } else {
                                 val changed = old.hour != hour || old.minute != minute ||
                                     old.label != label || old.repeatDays != repeatDays ||
-                                    old.vibrationEnabled != vibrate || old.snoozeMinutes != snooze
+                                    old.vibrationEnabled != vibrate || old.snoozeMinutes != snooze ||
+                                    old.challengeType != challenge || old.mathDifficulty != difficulty ||
+                                    old.mathQuestionCount != questions || old.shakeCount != shakes
                                 if (changed) {
                                     val next = old.copy(
                                         hour = hour, minute = minute, label = label,
                                         repeatDays = repeatDays, vibrationEnabled = vibrate,
                                         snoozeMinutes = snooze,
+                                        challengeType = challenge, mathDifficulty = difficulty,
+                                        mathQuestionCount = questions, shakeCount = shakes,
                                         scheduleGeneration = old.scheduleGeneration + 1L
                                     )
                                     repository.updateAlarm(next)
@@ -430,7 +436,7 @@ fun WakeGuardHome() {
         } else {
             Box(Modifier.fillMaxWidth().padding(bottom = 16.dp), contentAlignment = Alignment.Center) {
                 FloatingActionButton(onClick = { editingAlarm = null; showEditor = true },
-                    containerColor = Accent) {
+                    containerColor = Accent, shape = RoundedCornerShape(20.dp)) {
                     Text("+", fontSize = 34.sp, color = Color.White)
                 }
             }
@@ -524,6 +530,11 @@ fun AlarmCard(
             }
         }
         Spacer(Modifier.height(4.dp))
+        if (alarm.label.isNotBlank() && alarm.label != "New Alarm") {
+            Text(alarm.label, color = Color(0xFFD8E2FF), fontSize = 14.sp,
+                fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(5.dp))
+        }
         Text(when (alarm.repeatDays) {
             "" -> "Ring once"
             "1,2,3,4,5,6,7" -> "Every day"

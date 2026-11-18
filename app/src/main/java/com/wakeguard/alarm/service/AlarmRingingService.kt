@@ -47,6 +47,10 @@ class AlarmRingingService : Service() {
     private var currentLabel = "Wake up!"
     private var currentSnoozeMinutes = 5
     private var currentVibrationEnabled = true
+    private var currentChallengeType = "SWIPE"
+    private var currentMathDifficulty = "EASY"
+    private var currentMathQuestionCount = 3
+    private var currentShakeCount = 10
     private var isRinging = false
 
     private val timeoutRunnable = Runnable {
@@ -111,6 +115,10 @@ class AlarmRingingService : Service() {
                     currentLabel = label
                     currentSnoozeMinutes = intent.getIntExtra("snooze_minutes", 5).coerceIn(1, 60)
                     currentVibrationEnabled = intent.getBooleanExtra("vibration_enabled", true)
+                    currentChallengeType = intent.getStringExtra("challenge_type") ?: "SWIPE"
+                    currentMathDifficulty = intent.getStringExtra("math_difficulty") ?: "EASY"
+                    currentMathQuestionCount = intent.getIntExtra("math_question_count", 3).coerceIn(1, 10)
+                    currentShakeCount = intent.getIntExtra("shake_count", 10).coerceIn(1, 30)
 
                     startRinging()
                 } else {
@@ -201,39 +209,39 @@ class AlarmRingingService : Service() {
     }
 
 
-private fun startVibration() {
-    try {
-        vibrator = if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-        ) {
-            val manager = getSystemService(
-                VIBRATOR_MANAGER_SERVICE
-            ) as VibratorManager
-            manager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(
-                VIBRATOR_SERVICE
-            ) as Vibrator
-        }
+    private fun startVibration() {
+        try {
+            vibrator = if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            ) {
+                val manager = getSystemService(
+                    VIBRATOR_MANAGER_SERVICE
+                ) as VibratorManager
+                manager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(
+                    VIBRATOR_SERVICE
+                ) as Vibrator
+            }
 
-        val pattern = longArrayOf(
-            0, 600, 400, 600, 400
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator?.vibrate(
-                VibrationEffect.createWaveform(pattern, 0)
+            val pattern = longArrayOf(
+                0, 600, 400, 600, 400
             )
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator?.vibrate(pattern, 0)
-        }
 
-    } catch (e: Exception) {
-        Log.e("WakeGuard", "Vibration unavailable", e)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(
+                    VibrationEffect.createWaveform(pattern, 0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(pattern, 0)
+            }
+
+        } catch (e: Exception) {
+            Log.e("WakeGuard", "Vibration unavailable", e)
+        }
     }
-}
 
 
     private fun buildNotification(): Notification {
@@ -243,10 +251,15 @@ private fun startVibration() {
             AlarmRingActivity::class.java
         ).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
 
             putExtra("alarm_label", currentLabel)
+            putExtra("snooze_minutes", currentSnoozeMinutes)
+            putExtra("challenge_type", currentChallengeType)
+            putExtra("math_difficulty", currentMathDifficulty)
+            putExtra("math_question_count", currentMathQuestionCount)
+            putExtra("shake_count", currentShakeCount)
         }
 
         val fullScreenPendingIntent =
@@ -255,7 +268,7 @@ private fun startVibration() {
                 100,
                 fullScreenIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val dismissIntent = Intent(
@@ -271,7 +284,7 @@ private fun startVibration() {
                 101,
                 dismissIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val snoozeIntent = Intent(
@@ -287,7 +300,7 @@ private fun startVibration() {
                 102,
                 snoozeIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         return NotificationCompat.Builder(

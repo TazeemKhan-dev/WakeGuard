@@ -55,6 +55,10 @@ class AlarmReceiver : BroadcastReceiver() {
                         putExtra(AlarmScheduler.EXTRA_GENERATION, alarm.scheduleGeneration)
                         putExtra("snooze_minutes", alarm.snoozeMinutes)
                         putExtra("vibration_enabled", alarm.vibrationEnabled)
+                        putExtra("challenge_type", alarm.challengeType)
+                        putExtra("math_difficulty", alarm.mathDifficulty)
+                        putExtra("math_question_count", alarm.mathQuestionCount)
+                        putExtra("shake_count", alarm.shakeCount)
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         appContext.startForegroundService(serviceIntent)
