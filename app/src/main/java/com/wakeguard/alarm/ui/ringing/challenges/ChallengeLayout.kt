@@ -4,7 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -35,29 +38,33 @@ internal fun ChallengeLayout(
     onSnooze: () -> Unit,
     onExitPreview: () -> Unit,
     onFallbackDismiss: () -> Unit,
+    allowFallbackDismiss: Boolean = false,
+    compact: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val dark = alarmScreenIsDark()
+    var clock by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) { while (true) { clock = Date(); delay(1000) } }
     Column(
         Modifier.fillMaxSize().background(
             Brush.verticalGradient(if (dark) listOf(Color(0xFF090A0E), Color(0xFF151827), Color(0xFF24283A)) else listOf(Color(0xFFF7F9FE), Color.White, Color(0xFFEAF0FF)))
-        ).systemBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp),
+        ).systemBarsPadding().then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier).padding(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(18.dp))
-        Text(SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date()),
-            fontSize = 55.sp, color = Ink, fontWeight = FontWeight.Light)
+        Spacer(Modifier.height(if (compact) 8.dp else 18.dp))
+        Text(SimpleDateFormat("h:mm a", Locale.getDefault()).format(clock),
+            fontSize = if (compact) 40.sp else 55.sp, color = Ink, fontWeight = FontWeight.Light)
         if (label.isNotBlank()) {
             Text(label, color = MutedText, fontSize = 17.sp)
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(if (compact) 8.dp else 18.dp))
         Surface(color = if (dark) Color(0xFF302B46) else Color(0xFFEAF0FF), shape = RoundedCornerShape(50.dp)) {
             Text(title, color = Indigo, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp))
         }
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(if (compact) 12.dp else 30.dp))
         content()
-        Spacer(Modifier.weight(1f))
+        if (compact) Spacer(Modifier.height(16.dp)) else Spacer(Modifier.weight(1f))
         if (previewMode) {
             OutlinedButton(onClick = onExitPreview, modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(28.dp)) { Text("Exit preview", color = Indigo) }
@@ -65,9 +72,11 @@ internal fun ChallengeLayout(
             Button(onClick = onSnooze, modifier = Modifier.fillMaxWidth().height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Indigo),
                 shape = RoundedCornerShape(28.dp)) { Text("Snooze · $snoozeMinutes min", color = if (dark) Color(0xFF101018) else Color.White) }
+            if (allowFallbackDismiss) {
             Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = onFallbackDismiss, modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(28.dp)) { Text("Dismiss without challenge", color = Indigo) }
+            }
         }
         Spacer(Modifier.height(12.dp))
     }

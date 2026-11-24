@@ -9,6 +9,9 @@ fun ChallengeRouter(
     mathDifficulty: String,
     mathQuestionCount: Int,
     shakeCount: Int,
+    memoryDifficulty: String,
+    memoryRounds: Int,
+    memoryDurationSeconds: Int,
     previewMode: Boolean,
     label: String,
     snoozeMinutes: Int,
@@ -22,6 +25,8 @@ fun ChallengeRouter(
             mathQuestionCount, previewMode, onDismiss, onSnooze, onExitPreview)
         "SHAKE" -> ShakeChallengeScreen(displayLabel, snoozeMinutes, shakeCount,
             previewMode, onDismiss, onSnooze, onExitPreview)
+        "MEMORY" -> MemoryChallengeScreen(displayLabel, snoozeMinutes, memoryDifficulty,
+            memoryRounds, memoryDurationSeconds, previewMode, onDismiss, onSnooze, onExitPreview)
         else -> AlarmRingScreen(
             label = displayLabel,
             snoozeMinutes = snoozeMinutes,

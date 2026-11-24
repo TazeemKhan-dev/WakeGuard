@@ -91,7 +91,7 @@ fun ShakeChallengeScreen(
             color = Ink, fontSize = 23.sp, fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
-        Text(if (sensor == null) "Use the dismissal option below."
+        Text(if (sensor == null) "Snooze the alarm if needed."
              else "Move at a comfortable pace. Stop if it feels uncomfortable.",
             color = MutedText, fontSize = 14.sp, textAlign = TextAlign.Center)
     }

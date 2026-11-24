@@ -1,3 +1,4 @@
+
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Notifications -->
@@ -23,7 +24,9 @@
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Restore alarms after device reboot -->
+    <uses-permission
+        android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -59,18 +62,35 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.WakeGuard" />
 
+        <!-- Awake Check screen -->
+        <activity
+            android:name=".ui.ringing.AwakeCheckActivity"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:exported="false"
+            android:theme="@style/Theme.WakeGuard" />
+
+        <!-- Awake Check receiver -->
+        <receiver
+            android:name=".receiver.AwakeCheckReceiver"
+            android:exported="false" />
+
         <!-- Alarm trigger -->
         <receiver
             android:name=".receiver.AlarmReceiver"
             android:exported="false" />
 
+        <!-- Restore alarms after reboot -->
         <receiver
             android:name=".receiver.AlarmBootReceiver"
             android:enabled="true"
             android:exported="false">
+
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action
+                    android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
+
         </receiver>
 
         <!-- Legacy dismiss receiver -->

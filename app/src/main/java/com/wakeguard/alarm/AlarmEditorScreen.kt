@@ -1,6 +1,8 @@
 package com.wakeguard.alarm
 
 import android.content.Intent
+import com.wakeguard.alarm.ringtone.RingtoneScreen
+import com.wakeguard.alarm.ringtone.ringtoneDisplayName
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalContext
 import com.wakeguard.alarm.ui.ringing.AlarmRingActivity
@@ -8,7 +10,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wakeguard.alarm.data.local.AlarmEntity
+import com.wakeguard.alarm.ui.theme.AlarmDefaults
 import java.util.Calendar
 import kotlin.math.abs
 
@@ -37,8 +44,15 @@ private val weekdays = setOf(2, 3, 4, 5, 6)
 private val weekends = setOf(1, 7)
 
 @Composable
-private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, modifier: Modifier = Modifier) {
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = initial.coerceIn(0, values.lastIndex))
+private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, modifier: Modifier = Modifier, infinite: Boolean = false, rowHeight: Int = 56) {
+    val count = if (infinite) Int.MAX_VALUE else values.size
+    val start = if (infinite) (count / 2 / values.size) * values.size + initial else initial.coerceIn(0, values.lastIndex)
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = start)
+    val latestOnValue by rememberUpdatedState(onValue)
+    val isolate = remember { object : NestedScrollConnection {
+        override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = Offset(0f, available.y)
+        override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = Velocity(0f, available.y)
+    } }
     val fling = rememberSnapFlingBehavior(lazyListState = state)
     LaunchedEffect(state, values) {
         snapshotFlow {
@@ -48,17 +62,18 @@ private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, mo
                 abs(item.offset + item.size / 2 - center)
             }?.index
         }.collect { index ->
-            if (index != null && index in values.indices) onValue(index)
+            if (index != null) latestOnValue(index % values.size)
         }
     }
     LazyColumn(
         state = state,
         flingBehavior = fling,
-        contentPadding = PaddingValues(vertical = 56.dp),
-        modifier = modifier.height(168.dp),
+        contentPadding = PaddingValues(vertical = rowHeight.dp),
+        modifier = modifier.height((rowHeight * 3).dp).nestedScroll(isolate),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        itemsIndexed(values) { index, value ->
+        items(count) { index ->
+            val value = values[index % values.size]
             val selected by remember {
                 derivedStateOf {
                     val info = state.layoutInfo
@@ -66,7 +81,7 @@ private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, mo
                     info.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - center) }?.index == index
                 }
             }
-            Box(Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().height(rowHeight.dp), contentAlignment = Alignment.Center) {
                 Text(value, color = if (selected) W.text else W.secondary,
                     fontSize = if (selected) 27.sp else 18.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
@@ -76,22 +91,62 @@ private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, mo
 }
 
 @Composable
+internal fun NumberWheelRow(title: String, unit: String, range: IntRange, value: Int, onValue: (Int) -> Unit) {
+    val values = remember(range) { range.map { it.toString() } }
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = W.text)
+            Text(unit, color = muted, fontSize = 12.sp)
+        }
+        Wheel(values, value.coerceIn(range.first, range.last) - range.first,
+            { onValue(it + range.first) }, Modifier.width(100.dp), rowHeight = 36)
+    }
+}
+
+@Composable
 fun AlarmEditorScreen(
     existing: AlarmEntity?,
+    alarmDefaults: AlarmDefaults = AlarmDefaults(),
+    availableAlarms: List<AlarmEntity> = emptyList(),
     onCancel: () -> Unit,
-    onSave: (Int, Int, String, String, Boolean, Int, String, String, Int, Int) -> Unit
+    onSave: (Int, Int, String, String, Boolean, Int, String, String, Int, Int, String, Int, Int, String?, Boolean, Int, Int, Set<Long>) -> Unit
 ) {
     val context = LocalContext.current
     val now = remember { Calendar.getInstance() }
     var hour by remember(existing?.id) { mutableIntStateOf(existing?.hour ?: now.get(Calendar.HOUR_OF_DAY)) }
     var minute by remember(existing?.id) { mutableIntStateOf(existing?.minute ?: now.get(Calendar.MINUTE)) }
     var label by remember(existing?.id) { mutableStateOf(existing?.label?.takeUnless { it == "New Alarm" } ?: "") }
+    var soundUri by remember(existing?.id) { mutableStateOf(existing?.soundUri) }
+    var ringtoneScreen by remember { mutableStateOf(false) }
     var vibration by remember(existing?.id) { mutableStateOf(existing?.vibrationEnabled ?: true) }
-    var snoozeMinutes by remember(existing?.id) { mutableIntStateOf(existing?.snoozeMinutes ?: 5) }
+    var snoozeMinutes by remember(existing?.id) { mutableIntStateOf(existing?.snoozeMinutes ?: alarmDefaults.snoozeMinutes) }
     var challenge by remember(existing?.id) { mutableStateOf(existing?.challengeType ?: "SWIPE") }
     var difficulty by remember(existing?.id) { mutableStateOf(existing?.mathDifficulty ?: "EASY") }
     var questionCount by remember(existing?.id) { mutableIntStateOf(existing?.mathQuestionCount ?: 3) }
     var shakeCount by remember(existing?.id) { mutableIntStateOf(existing?.shakeCount ?: 10) }
+    var memoryDifficulty by remember(existing?.id) { mutableStateOf(existing?.memoryDifficulty ?: "EASY") }
+    var memoryRounds by remember(existing?.id) { mutableIntStateOf(existing?.memoryRounds ?: 3) }
+    var memoryDurationSeconds by remember(existing?.id) { mutableIntStateOf(existing?.memoryDurationSeconds ?: 10) }
+    var awakeCheckEnabled by remember(existing?.id) { mutableStateOf(existing?.awakeCheckEnabled ?: alarmDefaults.awakeCheckEnabled) }
+    var awakeCheckDelayText by remember(existing?.id) { mutableStateOf((existing?.awakeCheckDelayMinutes ?: alarmDefaults.awakeCheckDelayMinutes).toString()) }
+    var awakeCheckTimeoutText by remember(existing?.id) { mutableStateOf((existing?.awakeCheckTimeoutSeconds ?: alarmDefaults.awakeCheckTimeoutSeconds).toString()) }
+    var linkedSelection by remember(existing?.id) { mutableStateOf(existing?.groupId != null) }
+    val otherAlarms = availableAlarms.filter { it.id != existing?.id }
+    val linkedGroupMembers = otherAlarms.filter { existing?.groupId != null && it.groupId == existing.groupId }
+    var selectedIds by remember(existing?.id) {
+        mutableStateOf(linkedGroupMembers.map { it.id }.toSet())
+    }
+    fun toggleLinked(candidate: AlarmEntity) {
+        val ids = if (candidate.groupId == null) setOf(candidate.id)
+            else otherAlarms.filter { it.groupId == candidate.groupId }.map { it.id }.toSet()
+        selectedIds = if (candidate.id in selectedIds) selectedIds - ids else selectedIds + ids
+    }
+    LaunchedEffect(linkedSelection) {
+        if (linkedSelection) awakeCheckEnabled = true
+    }
+    val awakeCheckDelay = awakeCheckDelayText.toIntOrNull()?.takeIf { it in 1..1440 }
+    val awakeCheckTimeout = awakeCheckTimeoutText.toIntOrNull()?.takeIf { it in 1..3600 }
+
     var selectedDays by remember(existing?.id) {
         mutableStateOf(existing?.repeatDays?.split(",")?.mapNotNull { it.toIntOrNull() }
             ?.filter { it in 1..7 }?.toSet() ?: emptySet())
@@ -100,16 +155,16 @@ fun AlarmEditorScreen(
         mutableStateOf(selectedDays.isNotEmpty() && selectedDays != allDays &&
             selectedDays != weekdays && selectedDays != weekends)
     }
-    var snoozeScreen by remember { mutableStateOf(false) }
+    
     var challengeScreen by remember { mutableStateOf(false) }
 
     // Consume Android system Back inside nested editor pages before MainActivity
     // can close the entire editor. Preview is a separate Activity, so Android
     // returns to this challenge settings page when that Activity finishes.
-    BackHandler(enabled = challengeScreen || snoozeScreen) {
+    BackHandler(enabled = challengeScreen || ringtoneScreen) {
         when {
+            ringtoneScreen -> ringtoneScreen = false
             challengeScreen -> challengeScreen = false
-            snoozeScreen -> snoozeScreen = false
         }
     }
     val period = if (hour < 12) 0 else 1
@@ -123,6 +178,11 @@ fun AlarmEditorScreen(
             .filterIndexed { index, _ -> index + 1 in selectedDays }.joinToString(", ")
     }
 
+    if (ringtoneScreen) {
+        RingtoneScreen(selected = soundUri, onSelect = { soundUri = it }, onBack = { ringtoneScreen = false })
+        return
+    }
+
     if (challengeScreen) {
         ChallengeSettingsScreen(
             challenge = challenge,
@@ -133,6 +193,17 @@ fun AlarmEditorScreen(
             onQuestionCountChange = { questionCount = it },
             shakeCount = shakeCount,
             onShakeCountChange = { shakeCount = it },
+            memoryDifficulty = memoryDifficulty,
+            onMemoryDifficultyChange = { level ->
+                if (memoryDifficulty != level) {
+                    memoryDifficulty = level
+                    memoryDurationSeconds = when (level) { "MEDIUM" -> 7; "HARD" -> 5; else -> 10 }
+                }
+            },
+            memoryRounds = memoryRounds,
+            onMemoryRoundsChange = { memoryRounds = it },
+            memoryDurationSeconds = memoryDurationSeconds,
+            onMemoryDurationChange = { memoryDurationSeconds = it },
             onPreview = {
                 context.startActivity(Intent(context, AlarmRingActivity::class.java).apply {
                     putExtra("preview_mode", true)
@@ -142,30 +213,13 @@ fun AlarmEditorScreen(
                     putExtra("math_difficulty", difficulty)
                     putExtra("math_question_count", questionCount)
                     putExtra("shake_count", shakeCount)
+                    putExtra("memory_difficulty", memoryDifficulty)
+                    putExtra("memory_rounds", memoryRounds)
+                    putExtra("memory_duration_seconds", memoryDurationSeconds)
                 })
             },
             onBack = { challengeScreen = false }
         )
-        return
-    }
-
-    if (snoozeScreen) {
-        Column(Modifier.fillMaxSize().background(bg).statusBarsPadding().padding(20.dp)) {
-            TextButton(onClick = { snoozeScreen = false }) { Text("‹  Snooze", color = blue, fontSize = 19.sp) }
-            Spacer(Modifier.height(22.dp))
-            Column(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(16.dp)).padding(18.dp)) {
-                Text("Interval", color = W.text, fontSize = 17.sp)
-                Text("Scroll to choose minutes", color = muted, fontSize = 12.sp)
-                Wheel((1..60).map { "$it min" }, (snoozeMinutes - 1).coerceIn(0, 59),
-                    onValue = { snoozeMinutes = it + 1 }, modifier = Modifier.fillMaxWidth())
-            }
-            Spacer(Modifier.height(14.dp))
-            Text("Snooze interval is configurable from 1 to 60 minutes. A maximum snooze count is not yet supported by the alarm engine.",
-                color = muted, fontSize = 13.sp)
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = { snoozeScreen = false }, modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = blue)) { Text("Done") }
-        }
         return
     }
 
@@ -176,10 +230,11 @@ fun AlarmEditorScreen(
             TextButton(onClick = onCancel) { Text("Cancel", color = blue) }
             Text(if (existing == null) "New alarm" else "Edit alarm", color = W.text,
                 fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-            TextButton(onClick = {
+            TextButton(enabled = (!awakeCheckEnabled || (awakeCheckDelay != null && awakeCheckTimeout != null)) && (!linkedSelection || selectedIds.isNotEmpty()), onClick = {
                 onSave(hour, minute, label.ifBlank { "New Alarm" },
                     selectedDays.sorted().joinToString(","), vibration, snoozeMinutes,
-                    challenge, difficulty, questionCount, shakeCount)
+                    challenge, difficulty, questionCount, shakeCount, memoryDifficulty, memoryRounds, memoryDurationSeconds, soundUri,
+                    awakeCheckEnabled, awakeCheckDelay ?: 2, awakeCheckTimeout ?: 60, if (linkedSelection) selectedIds else emptySet())
             }) { Text("Done", color = blue) }
         }
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -190,8 +245,8 @@ fun AlarmEditorScreen(
                 Wheel((1..12).map { it.toString() }, displayHour - 1, { index ->
                     val h = index + 1
                     hour = (h % 12) + if (period == 1) 12 else 0
-                }, Modifier.weight(1f))
-                Wheel((0..59).map { "%02d".format(it) }, minute, { minute = it }, Modifier.weight(1f))
+                }, Modifier.weight(1f), infinite = true)
+                Wheel((0..59).map { "%02d".format(it) }, minute, { minute = it }, Modifier.weight(1f), infinite = true)
                 Wheel(listOf("AM", "PM"), period, { p ->
                     hour = (hour % 12) + if (p == 1) 12 else 0
                 }, Modifier.weight(0.85f))
@@ -247,6 +302,7 @@ fun AlarmEditorScreen(
                     Text(when (challenge) {
                         "MATH" -> "Math · ${difficulty.lowercase()} · $questionCount questions"
                         "SHAKE" -> "Shake · $shakeCount movements"
+                        "MEMORY" -> "Memory · ${memoryDifficulty.lowercase()} · $memoryRounds rounds · ${memoryDurationSeconds}s"
                         else -> "Swipe up"
                     }, color = muted, fontSize = 12.sp)
                 }
@@ -290,13 +346,14 @@ fun AlarmEditorScreen(
                 Text("Alarm options", color = W.text,
                     fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 HorizontalDivider(Modifier.padding(top = 12.dp), color = W.outline)
-                Row(Modifier.fillMaxWidth().padding(vertical = 13.dp),
+                Row(Modifier.fillMaxWidth().clickable { ringtoneScreen = true }.padding(vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text("Ringtone", color = W.text)
-                        Text("Default · picker coming in engine update", color = muted, fontSize = 12.sp)
+                        Text(ringtoneDisplayName(context, soundUri), color = muted, fontSize = 12.sp)
                     }
+                    Text("›", color = muted, fontSize = 24.sp)
                 }
                 HorizontalDivider(color = W.outline)
                 Row(Modifier.fillMaxWidth().padding(vertical = 13.dp),
@@ -306,15 +363,55 @@ fun AlarmEditorScreen(
                     Switch(checked = vibration, onCheckedChange = { vibration = it })
                 }
                 HorizontalDivider(color = W.outline)
-                Row(Modifier.fillMaxWidth().clickable { snoozeScreen = true }.padding(vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("Snooze", color = W.text)
-                        Text("$snoozeMinutes minutes", color = muted, fontSize = 12.sp)
-                    }
-                    Text("›", color = muted, fontSize = 24.sp)
+                NumberWheelRow("Snooze", "minutes", 1..60, snoozeMinutes) { snoozeMinutes = it }
+            }
+            Column(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(18.dp)).padding(16.dp)) {
+                Text("Linked alarms", color = W.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("Linked alarms are skipped only after you confirm I'm Awake. Awake Check is required.",
+                    color = muted, fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Link this alarm", color = W.text, modifier = Modifier.weight(1f))
+                    Switch(checked = linkedSelection, onCheckedChange = {
+                        linkedSelection = it
+                        if (!it) selectedIds = emptySet()
+                    }, enabled = otherAlarms.isNotEmpty() || existing?.groupId != null)
                 }
+                if (linkedSelection) {
+                    if (linkedGroupMembers.isNotEmpty()) {
+                        Text("Currently linked with: " + linkedGroupMembers.joinToString { formatTime(it.hour, it.minute) },
+                            color = muted, fontSize = 12.sp)
+                    }
+                    Text("Select alarms to link", color = W.text, fontSize = 13.sp)
+                    otherAlarms.forEach { candidate ->
+                        val chosen = candidate.id in selectedIds
+                        Row(Modifier.fillMaxWidth().clickable { toggleLinked(candidate) }.padding(vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = chosen, onCheckedChange = { toggleLinked(candidate) })
+                            Text(formatTime(candidate.hour, candidate.minute) + "  " +
+                                candidate.label.takeUnless { it == "New Alarm" }.orEmpty(), color = W.text, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+            Column(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(18.dp)).padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Awake Check", color = W.text, fontWeight = FontWeight.SemiBold)
+                        Text("Ask if you're awake after dismissing the alarm", color = muted, fontSize = 12.sp)
+                    }
+                    Switch(checked = awakeCheckEnabled, onCheckedChange = { awakeCheckEnabled = it },
+                        enabled = !linkedSelection)
+                }
+                if (awakeCheckEnabled) {
+                    Spacer(Modifier.height(12.dp))
+                    NumberWheelRow("Ask after", "minutes", 1..1440, awakeCheckDelay ?: 2) { awakeCheckDelayText = it.toString() }
+                    HorizontalDivider(color = W.outline)
+                    NumberWheelRow("Response time", "seconds", 1..3600, awakeCheckTimeout ?: 60) { awakeCheckTimeoutText = it.toString() }
+                }
+                Text(if (linkedSelection) "Required for linked alarms" else "Awake Check runs after dismissal, not snooze.",
+                    color = muted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(18.dp))
         }
@@ -327,10 +424,13 @@ private fun ChallengeSettingsScreen(
     difficulty: String, onDifficultyChange: (String) -> Unit,
     questionCount: Int, onQuestionCountChange: (Int) -> Unit,
     shakeCount: Int, onShakeCountChange: (Int) -> Unit,
+    memoryDifficulty: String, onMemoryDifficultyChange: (String) -> Unit,
+    memoryRounds: Int, onMemoryRoundsChange: (Int) -> Unit,
+    memoryDurationSeconds: Int, onMemoryDurationChange: (Int) -> Unit,
     onPreview: () -> Unit, onBack: () -> Unit
 ) {
     val purple = W.primary
-    Column(Modifier.fillMaxSize().background(bg).statusBarsPadding().padding(18.dp)) {
+    Column(Modifier.fillMaxSize().background(bg).statusBarsPadding().verticalScroll(rememberScrollState()).padding(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("‹ Back", color = blue) }
             Spacer(Modifier.weight(1f))
@@ -345,7 +445,8 @@ private fun ChallengeSettingsScreen(
         listOf(
             Triple("SWIPE", "↑", "Swipe up to dismiss"),
             Triple("MATH", "▦", "Answer arithmetic questions"),
-            Triple("SHAKE", "▯", "Move your phone to complete")
+            Triple("SHAKE", "▯", "Move your phone to complete"),
+            Triple("MEMORY", "▦", "Memorize and recall highlighted blocks")
         ).forEach { (method, symbol, description) ->
             val active = challenge == method
             Row(Modifier.fillMaxWidth().padding(bottom = 10.dp)
@@ -374,17 +475,34 @@ private fun ChallengeSettingsScreen(
                             labelColor = W.text))
                 }
             }
-            Text("Questions: $questionCount", color = W.text)
-            Slider(value = questionCount.toFloat(), onValueChange = { onQuestionCountChange(it.toInt().coerceIn(1,10)) },
-                valueRange = 1f..10f, steps = 8)
+            NumberWheelRow("Questions", "questions", 1..10, questionCount, onQuestionCountChange)
         }
         if (challenge == "SHAKE") {
             Spacer(Modifier.height(8.dp))
-            Text("Required movements: $shakeCount", color = W.text)
-            Slider(value = shakeCount.toFloat(), onValueChange = { onShakeCountChange(it.toInt().coerceIn(1,30)) },
-                valueRange = 1f..30f, steps = 28)
+            NumberWheelRow("Required movements", "movements", 1..30, shakeCount, onShakeCountChange)
         }
-        Spacer(Modifier.weight(1f))
+        if (challenge == "MEMORY") {
+            Spacer(Modifier.height(8.dp))
+            Text("Difficulty", color = W.text, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("EASY", "MEDIUM", "HARD").forEach { level ->
+                    FilterChip(selected = memoryDifficulty == level, onClick = { onMemoryDifficultyChange(level) },
+                        label = { Text(level.lowercase().replaceFirstChar { it.uppercase() }) },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = blue,
+                            selectedLabelColor = Color.White, labelColor = W.text))
+                }
+            }
+            Text(when (memoryDifficulty) {
+                "MEDIUM" -> "4 × 4 grid · 5 highlighted blocks"
+                "HARD" -> "5 × 5 grid · 8 highlighted blocks"
+                else -> "3 × 3 grid · 3 highlighted blocks"
+            }, color = muted, fontSize = 12.sp)
+            NumberWheelRow("Rounds", "rounds", 1..10, memoryRounds, onMemoryRoundsChange)
+            key(memoryDifficulty) {
+                NumberWheelRow("Memorization duration", "seconds", 5..10, memoryDurationSeconds, onMemoryDurationChange)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
         Button(onClick = onPreview, modifier = Modifier.fillMaxWidth().height(54.dp),
             colors = ButtonDefaults.buttonColors(containerColor = blue),
             shape = RoundedCornerShape(28.dp)) { Text("▶  Try preview", color = Color.White) }

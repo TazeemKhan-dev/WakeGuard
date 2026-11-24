@@ -2,6 +2,8 @@
 package com.wakeguard.alarm
 
 import android.Manifest
+import com.wakeguard.alarm.awake.AwakeCheckManager
+import com.wakeguard.alarm.linked.LinkedAlarmManager
 import android.app.NotificationManager
 import android.app.TimePickerDialog
 import android.content.Context
@@ -25,10 +27,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import com.wakeguard.alarm.ui.theme.AlarmScreenTheme
 import com.wakeguard.alarm.ui.theme.ThemeMode
 import com.wakeguard.alarm.ui.theme.ThemePreferences
+import com.wakeguard.alarm.ui.theme.AlarmDefaults
 import com.wakeguard.alarm.ui.theme.WakeGuardTheme
 import com.wakeguard.alarm.ui.theme.WakeGuardColors as W
 import com.wakeguard.alarm.ui.settings.SettingsScreen
@@ -46,6 +50,7 @@ import com.wakeguard.alarm.data.local.WakeGuardDatabase
 import com.wakeguard.alarm.data.repository.AlarmRepository
 import com.wakeguard.alarm.domain.scheduler.AlarmScheduler
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.Calendar
 import java.util.UUID
 
@@ -64,13 +69,23 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             val selectedMode by preferences.mode.collectAsState(initial = ThemeMode.SYSTEM)
             val selectedAlarmMode by preferences.alarmScreenMode.collectAsState(initial = AlarmScreenTheme.DARK)
+            val defaults by preferences.alarmDefaults.collectAsState(initial = null)
             WakeGuardTheme(selectedMode) {
+                val loadedDefaults = defaults
+                if (loadedDefaults == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else {
                 WakeGuardHome(
                     themeMode = selectedMode,
                     onThemeChange = { newMode -> scope.launch { preferences.setMode(newMode) } },
+                    alarmDefaults = loadedDefaults,
+                    onAlarmDefaultsChange = { value -> scope.launch { preferences.setAlarmDefaults(value) } },
                     alarmScreenMode = selectedAlarmMode,
                     onAlarmScreenThemeChange = { newMode -> scope.launch { preferences.setAlarmScreenMode(newMode) } }
                 )
+                }
             }
         }
     }
@@ -78,6 +93,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun WakeGuardHome(
+    alarmDefaults: AlarmDefaults,
+    onAlarmDefaultsChange: (AlarmDefaults) -> Unit,
     themeMode: ThemeMode,
     onThemeChange: (ThemeMode) -> Unit,
     alarmScreenMode: AlarmScreenTheme,
@@ -107,6 +124,7 @@ fun WakeGuardHome(
         mutableStateOf(false)
     }
 
+    var alarmToDisable by remember { mutableStateOf<AlarmEntity?>(null) }
     var alarmToDelete by remember { mutableStateOf<AlarmEntity?>(null) }
     val selectedForDeletion = remember { mutableStateListOf<Long>() }
     var selectionMode by remember { mutableStateOf(false) }
@@ -136,17 +154,17 @@ fun WakeGuardHome(
         }
     }
 
-    // Load persisted alarms when the screen opens.
+    // Observe Room changes, including updates made by the ringing service.
     LaunchedEffect(repository) {
         try {
-            val savedAlarms = repository.getAllAlarms()
-
-            alarms.clear()
-            alarms.addAll(savedAlarms)
+            repository.observeAllAlarms().collect { savedAlarms ->
+                alarms.clear()
+                alarms.addAll(savedAlarms)
+                isLoading = false
+            }
         } catch (e: Exception) {
-            showMessage("Could not load saved alarms")
-        } finally {
             isLoading = false
+            showMessage("Could not observe saved alarms")
         }
     }
 
@@ -202,20 +220,39 @@ fun WakeGuardHome(
         }
     }
 
-    val nextAlarm = alarms
-        .filter { it.isEnabled }
-        .minByOrNull { alarm ->
-            val now = Calendar.getInstance()
-
-            val currentMinutes =
-                now.get(Calendar.HOUR_OF_DAY) * 60 +
-                        now.get(Calendar.MINUTE)
-
-            val alarmMinutes =
-                alarm.hour * 60 + alarm.minute
-
-            (alarmMinutes - currentMinutes + 1440) % 1440
+    // Refresh the next-alarm countdown as time passes, even without Room changes.
+    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentTimeMillis = System.currentTimeMillis()
+            delay(15_000L)
         }
+    }
+
+    val nextAlarmTimeMillis = alarms.asSequence()
+        .filter { it.isEnabled }
+        .mapNotNull { nextAlarmOccurrenceMillis(it, currentTimeMillis) }
+        .minOrNull()
+
+    val nextAlarmSummary = nextAlarmTimeMillis?.let { occurrence ->
+        val remainingMinutes = ((occurrence - currentTimeMillis).coerceAtLeast(0L) + 59_999L) / 60_000L
+        val hours = remainingMinutes / 60L
+        val minutes = remainingMinutes % 60L
+        val hoursText = when (hours) {
+            0L -> ""
+            1L -> "1 hour"
+            else -> "$hours hours"
+        }
+        val minutesText = when (minutes) {
+            0L -> ""
+            1L -> "1 minute"
+            else -> "$minutes minutes"
+        }
+        "Next alarm in " + listOf(hoursText, minutesText)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .ifBlank { "less than a minute" }
+    } ?: "No alarms set"
 
     BackHandler(enabled = showSettings || showEditor) {
         when {
@@ -229,6 +266,8 @@ fun WakeGuardHome(
 
     if (showSettings) {
         SettingsScreen(
+            alarmDefaults = alarmDefaults,
+            onAlarmDefaultsChange = onAlarmDefaultsChange,
             mode = themeMode,
             onModeChange = onThemeChange,
             alarmMode = alarmScreenMode,
@@ -241,15 +280,48 @@ fun WakeGuardHome(
     if (showEditor) {
         AlarmEditorScreen(
             existing = editingAlarm,
+            alarmDefaults = alarmDefaults,
+            availableAlarms = alarms.toList(),
             onCancel = { if (!isBusy) showEditor = false },
-            onSave = { hour, minute, label, repeatDays, vibrate, snooze, challenge, difficulty, questions, shakes ->
+            onSave = { hour, minute, label, repeatDays, vibrate, snooze, challenge, difficulty, questions, shakes, memoryDifficulty, memoryRounds, memoryDurationSeconds, soundUri, awakeEnabled, awakeDelay, awakeTimeout, selectedIds ->
                 if (!isBusy) {
                     isBusy = true
                     scope.launch {
                         val old = editingAlarm
                         var createdId: Long? = null
+                        var createdAlarm: AlarmEntity? = null
                         var updated: AlarmEntity? = null
+                        val linkedBefore = mutableListOf<AlarmEntity>()
                         try {
+                            val conflict = repository.getAllAlarms().firstOrNull { other ->
+                                other.id != old?.id && alarmOccurrencesOverlap(
+                                    other.hour, other.minute, other.repeatDays,
+                                    hour, minute, repeatDays
+                                )
+                            }
+                            if (conflict != null) {
+                                showMessage("An alarm already exists at this time on an overlapping day")
+                                return@launch
+                            }
+                            val all = repository.getAllAlarms()
+                            val selected = all.filter { it.id in selectedIds && it.id != old?.id }
+                            if (selected.size != selectedIds.size) {
+                                showMessage("A selected alarm no longer exists")
+                                return@launch
+                            }
+                            val groupIds = selected.mapNotNull { it.groupId }.toSet()
+                            val groupMembers = all.filter { it.id != old?.id &&
+                                    (it.id in selectedIds || it.groupId in groupIds) }
+                            val linkedGroupId = if (selected.isEmpty()) null else {
+                                old?.groupId?.takeIf { it in groupIds }
+                                    ?: groupIds.minOrNull()
+                                    ?: generateSequence { UUID.randomUUID().mostSignificantBits or Long.MIN_VALUE }
+                                        .first { candidate -> all.none { it.id == candidate || it.groupId == candidate } }
+                            }
+                            if (linkedGroupId != null && (!awakeEnabled || groupMembers.any { !it.awakeCheckEnabled })) {
+                                showMessage("Enable Awake Check on all selected alarms first")
+                                return@launch
+                            }
                             if (old == null) {
                                 val used = alarms.map { it.schedulerId }.toSet()
                                 var schedulerId: Int
@@ -260,11 +332,16 @@ fun WakeGuardHome(
                                     label = label, repeatDays = repeatDays,
                                     vibrationEnabled = vibrate, snoozeMinutes = snooze,
                                     challengeType = challenge, mathDifficulty = difficulty,
-                                    mathQuestionCount = questions, shakeCount = shakes
+                                    mathQuestionCount = questions, shakeCount = shakes, soundUri = soundUri,
+                                    memoryDifficulty = memoryDifficulty, memoryRounds = memoryRounds,
+                                    memoryDurationSeconds = memoryDurationSeconds,
+                                    awakeCheckEnabled = awakeEnabled, awakeCheckDelayMinutes = awakeDelay, awakeCheckTimeoutSeconds = awakeTimeout,
+                                    groupId = linkedGroupId
                                 )
                                 val id = repository.insertAlarm(fresh)
                                 createdId = id
                                 val saved = fresh.copy(id = id)
+                                createdAlarm = saved
                                 if (!AlarmScheduler.schedule(
                                         context, schedulerId, hour, minute, label,
                                         saved.scheduleGeneration, repeatDays
@@ -275,21 +352,34 @@ fun WakeGuardHome(
                                     requestExactAlarmPermission()
                                     return@launch
                                 }
-                                alarms.add(saved)
+
+
                             } else {
                                 val changed = old.hour != hour || old.minute != minute ||
-                                    old.label != label || old.repeatDays != repeatDays ||
-                                    old.vibrationEnabled != vibrate || old.snoozeMinutes != snooze ||
-                                    old.challengeType != challenge || old.mathDifficulty != difficulty ||
-                                    old.mathQuestionCount != questions || old.shakeCount != shakes
+                                        old.label != label || old.repeatDays != repeatDays ||
+                                        old.vibrationEnabled != vibrate || old.snoozeMinutes != snooze ||
+                                        old.challengeType != challenge || old.mathDifficulty != difficulty ||
+                                        old.mathQuestionCount != questions || old.shakeCount != shakes ||
+                                        old.memoryDifficulty != memoryDifficulty || old.memoryRounds != memoryRounds ||
+                                        old.memoryDurationSeconds != memoryDurationSeconds ||
+                                        old.soundUri != soundUri || old.awakeCheckEnabled != awakeEnabled ||
+                                        old.awakeCheckDelayMinutes != awakeDelay || old.awakeCheckTimeoutSeconds != awakeTimeout ||
+                                        old.groupId != linkedGroupId || !old.isEnabled
                                 if (changed) {
                                     val next = old.copy(
                                         hour = hour, minute = minute, label = label,
                                         repeatDays = repeatDays, vibrationEnabled = vibrate,
                                         snoozeMinutes = snooze,
                                         challengeType = challenge, mathDifficulty = difficulty,
-                                        mathQuestionCount = questions, shakeCount = shakes,
-                                        scheduleGeneration = old.scheduleGeneration + 1L
+                                        mathQuestionCount = questions, shakeCount = shakes, soundUri = soundUri,
+                                    memoryDifficulty = memoryDifficulty, memoryRounds = memoryRounds,
+                                    memoryDurationSeconds = memoryDurationSeconds,
+                                        groupId = linkedGroupId,
+                                        awakeCheckEnabled = awakeEnabled,
+                                        awakeCheckDelayMinutes = awakeDelay,
+                                        awakeCheckTimeoutSeconds = awakeTimeout,
+                                        scheduleGeneration = old.scheduleGeneration + 1L,
+                                        isEnabled = true
                                     )
                                     repository.updateAlarm(next)
                                     updated = next
@@ -303,14 +393,27 @@ fun WakeGuardHome(
                                         requestExactAlarmPermission()
                                         return@launch
                                     }
-                                    AlarmScheduler.cancel(context, old.schedulerId, old.scheduleGeneration)
-                                    val index = alarms.indexOfFirst { it.id == old.id }
-                                    if (index >= 0) alarms[index] = next
                                 }
+                            }
+                            for (member in groupMembers) {
+                                if (member.groupId != linkedGroupId) {
+                                    linkedBefore.add(member)
+                                    repository.updateAlarm(member.copy(groupId = linkedGroupId))
+                                }
+                            }
+                            if (old != null && updated != null) {
+                                AwakeCheckManager.cancel(context, old.schedulerId)
+                                AlarmScheduler.cancel(context, old.schedulerId, old.scheduleGeneration)
                             }
                             showEditor = false
                             showMessage("Alarm saved")
                         } catch (e: Exception) {
+                            linkedBefore.asReversed().forEach { anchor ->
+                                try { repository.updateAlarm(anchor) } catch (_: Exception) { }
+                            }
+                            createdAlarm?.let { fresh ->
+                                AlarmScheduler.cancel(context, fresh.schedulerId, fresh.scheduleGeneration)
+                            }
                             createdId?.let { id ->
                                 try { repository.deleteAlarmById(id) } catch (_: Exception) { }
                             }
@@ -348,8 +451,7 @@ fun WakeGuardHome(
                 Column(Modifier.weight(1f)) {
                     Text("Alarm", color = W.text, fontSize = 34.sp,
                         fontWeight = FontWeight.Bold)
-                    Text(nextAlarm?.let { "Next alarm ${formatTime(it.hour, it.minute)}" }
-                        ?: "No alarms set", color = Muted, fontSize = 13.sp)
+                    Text(nextAlarmSummary, color = Muted, fontSize = 13.sp)
                 }
                 IconButton(onClick = { showSettings = true }) {
                     Text("⚙", fontSize = 27.sp, color = W.primary)
@@ -371,76 +473,44 @@ fun WakeGuardHome(
                 AlarmCard(
                     alarm = alarm,
                     onToggle = { enabled ->
-
                         if (!isBusy) {
-                            isBusy = true
-
-                            scope.launch {
-                                try {
-                                    if (enabled) {
-                                        val updated = alarm.copy(
-                                            isEnabled = true,
-                                            scheduleGeneration = alarm.scheduleGeneration + 1L
-                                        )
-                                        repository.updateAlarm(updated)
-                                        val scheduled = AlarmScheduler.schedule(
-                                            context = context,
-                                            alarmId = updated.schedulerId,
-                                            hour = updated.hour,
-                                            minute = updated.minute,
-                                            label = updated.label,
-                                            generation = updated.scheduleGeneration,
-                                            repeatDays = updated.repeatDays
-                                        )
-                                        if (!scheduled) {
-                                            repository.updateAlarm(alarm)
-                                            showMessage("Exact alarm permission required")
-                                            requestExactAlarmPermission()
-                                        } else {
-                                            AlarmScheduler.cancel(
-                                                context, alarm.schedulerId,
-                                                alarm.scheduleGeneration
-                                            )
-                                            val index = alarms.indexOfFirst { it.id == alarm.id }
-                                            if (index >= 0) alarms[index] = updated
-                                            showMessage("Alarm enabled")
-                                        }
-                                    } else {
-
-                                        // Persist disabled state first.
-                                        repository.updateAlarm(
-                                            alarm.copy(
-                                                isEnabled = false
-                                            )
-                                        )
-
-                                        AlarmScheduler.cancel(
-                                            context,
-                                            alarm.schedulerId,
-                                            alarm.scheduleGeneration
-                                        )
-
-                                        val index =
-                                            alarms.indexOfFirst {
-                                                it.id == alarm.id
+                            if (!enabled && (alarm.repeatDays.isNotBlank() || (alarm.groupId != null && alarms.any { it.groupId == alarm.groupId && it.repeatDays.isNotBlank() }))) {
+                                alarmToDisable = alarm
+                            } else {
+                                isBusy = true
+                                scope.launch {
+                                    try {
+                                        val all = repository.getAllAlarms()
+                                        val targets = if (alarm.groupId != null) all.filter {
+                                            it.groupId == alarm.groupId
+                                        } else listOf(alarm)
+                                        if (enabled) {
+                                            val conflict = targets.firstOrNull { target ->
+                                                all.any { other -> other.id != target.id &&
+                                                        other !in targets && alarmOccurrencesOverlap(
+                                                    other.hour, other.minute, other.repeatDays,
+                                                    target.hour, target.minute, target.repeatDays) }
                                             }
-
-                                        if (index >= 0) {
-                                            alarms[index] =
-                                                alarm.copy(
-                                                    isEnabled = false
-                                                )
+                                            if (conflict != null) {
+                                                showMessage("An alarm already exists at this time")
+                                                return@launch
+                                            }
+                                            if (!LinkedAlarmManager.setEnabled(context, targets, true)) {
+                                                showMessage("Could not enable alarms. Check exact alarm permission.")
+                                                requestExactAlarmPermission()
+                                                return@launch
+                                            }
+                                            showMessage("Linked alarms enabled")
+                                        } else {
+                                            if (!LinkedAlarmManager.setEnabled(context, targets, false)) {
+                                                showMessage("Could not disable alarms")
+                                                return@launch
+                                            }
+                                            showMessage("Linked alarms disabled")
                                         }
-
-                                        showMessage("Alarm disabled")
-                                    }
-
-                                } catch (e: Exception) {
-                                    showMessage(
-                                        "Could not update alarm"
-                                    )
-                                } finally {
-                                    isBusy = false
+                                    } catch (e: Exception) {
+                                        showMessage("Could not update alarms")
+                                    } finally { isBusy = false }
                                 }
                             }
                         }
@@ -480,13 +550,79 @@ fun WakeGuardHome(
                 Text("Delete ${selectedForDeletion.size} selected alarms")
             }
         } else {
-            Box(Modifier.fillMaxWidth().padding(bottom = 16.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().padding(bottom = 56.dp), contentAlignment = Alignment.Center) {
                 FloatingActionButton(onClick = { editingAlarm = null; showEditor = true },
-                    containerColor = Accent, shape = RoundedCornerShape(20.dp)) {
+                    containerColor = Accent, shape = CircleShape) {
                     Text("+", fontSize = 34.sp, color = Color.White)
                 }
             }
         }
+    }
+
+    alarmToDisable?.let { alarm ->
+        val next = AlarmScheduler.nextOccurrenceMillis(alarm.hour, alarm.minute,
+            alarm.repeatDays, currentTimeMillis)
+        val dayName = next?.let { time ->
+            val now = Calendar.getInstance()
+            val target = Calendar.getInstance().apply { timeInMillis = time }
+            val today = now.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
+                    now.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
+            val tomorrow = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+            when {
+                today -> "today"
+                tomorrow.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
+                        tomorrow.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR) -> "tomorrow"
+                else -> java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault()).format(time)
+            }
+        } ?: "next occurrence"
+        AlertDialog(
+            onDismissRequest = { if (!isBusy) alarmToDisable = null },
+            title = { Text("Turn off recurring alarm?") },
+            text = { Text(if (alarm.groupId != null) "This action applies to all linked alarms."
+            else "Choose whether to skip the next occurrence or turn off this alarm.") },
+            confirmButton = {
+                Column {
+                    TextButton(enabled = !isBusy, onClick = {
+                        if (next != null && !isBusy) {
+                            isBusy = true
+                            scope.launch {
+                                try {
+                                    val all = repository.getAllAlarms()
+                                    val targets = if (alarm.groupId != null) all.filter {
+                                        it.groupId == alarm.groupId
+                                    } else listOf(alarm)
+                                    if (LinkedAlarmManager.skipDate(context, targets, next)) {
+                                        showMessage("Skipped $dayName")
+                                        alarmToDisable = null
+                                    } else showMessage("Could not skip alarms")
+                                } catch (_: Exception) { showMessage("Could not skip alarms") }
+                                finally { isBusy = false }
+                            }
+                        }
+                    }) { Text("Skip $dayName") }
+                    TextButton(enabled = !isBusy, onClick = {
+                        isBusy = true
+                        scope.launch {
+                            try {
+                                val all = repository.getAllAlarms()
+                                val targets = if (alarm.groupId != null) all.filter {
+                                    it.groupId == alarm.groupId
+                                } else listOf(alarm)
+                                if (!LinkedAlarmManager.setEnabled(context, targets, false)) {
+                                    showMessage("Could not turn off alarms")
+                                    return@launch
+                                }
+                                alarmToDisable = null
+                                showMessage("Recurring alarms turned off")
+                            } catch (_: Exception) { showMessage("Could not turn off alarms") }
+                            finally { isBusy = false }
+                        }
+                    }) { Text("Turn off recurring alarm") }
+                }
+            },
+            dismissButton = { TextButton(enabled = !isBusy,
+                onClick = { alarmToDisable = null }) { Text("Cancel") } }
+        )
     }
 
     alarmToDelete?.let { alarm ->
@@ -506,9 +642,10 @@ fun WakeGuardHome(
                                 try {
                                     // Delete from Room first. Do not cancel on DB failure.
                                     val targets = if (selectionMode) alarms.filter { it.id in selectedForDeletion }
-                                        else listOf(alarm)
+                                    else listOf(alarm)
                                     targets.forEach { target ->
                                         repository.deleteAlarmById(target.id)
+                                        AwakeCheckManager.cancel(context, target.schedulerId)
                                         AlarmScheduler.cancel(context, target.schedulerId, target.scheduleGeneration)
                                     }
                                     alarms.removeAll { item -> targets.any { it.id == item.id } }
@@ -581,6 +718,10 @@ fun AlarmCard(
                 fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(5.dp))
         }
+        if (alarm.groupId != null) {
+            Text("↗ Linked alarm", color = Accent, fontSize = 12.sp)
+            Spacer(Modifier.height(3.dp))
+        }
         Text(when (alarm.repeatDays) {
             "" -> "Ring once"
             "1,2,3,4,5,6,7" -> "Every day"
@@ -605,4 +746,78 @@ fun formatTime(hour: Int, minute: Int): String {
         minute,
         period
     )
+}
+
+/**
+ * Checks the next seven calendar dates. A repeating alarm can occur on any of
+ * its selected weekdays; a one-time alarm only has its next upcoming occurrence.
+ * Disabled saved alarms are included by callers to avoid conflicts when re-enabled.
+ */
+private fun alarmOccurrencesOverlap(
+    firstHour: Int, firstMinute: Int, firstRepeatDays: String,
+    secondHour: Int, secondMinute: Int, secondRepeatDays: String
+): Boolean {
+    if (firstHour != secondHour || firstMinute != secondMinute) return false
+
+    val now = Calendar.getInstance()
+    val firstDates = nextOccurrenceDates(firstHour, firstMinute, firstRepeatDays, now)
+    val secondDates = nextOccurrenceDates(secondHour, secondMinute, secondRepeatDays, now)
+    return firstDates.any { it in secondDates }
+}
+
+private fun nextOccurrenceDates(
+    hour: Int, minute: Int, repeatDays: String, now: Calendar
+): Set<Long> {
+    val candidate = (now.clone() as Calendar).apply {
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        if (timeInMillis <= now.timeInMillis) add(Calendar.DAY_OF_YEAR, 1)
+    }
+    val weekdays = repeatDays.split(",")
+        .mapNotNull { it.trim().toIntOrNull() }
+        .filter { it in Calendar.SUNDAY..Calendar.SATURDAY }
+        .toSet()
+
+    if (repeatDays.isBlank()) {
+        return setOf(candidate.timeInMillis)
+    }
+
+    return buildSet {
+        repeat(7) {
+            if (candidate.get(Calendar.DAY_OF_WEEK) in weekdays) {
+                add(candidate.timeInMillis)
+            }
+            candidate.add(Calendar.DAY_OF_YEAR, 1)
+        }
+    }
+}
+
+/** Next scheduled wall-clock occurrence, respecting the selected weekdays. */
+private fun nextAlarmOccurrenceMillis(alarm: AlarmEntity, nowMillis: Long): Long? {
+    val selectedDays = alarm.repeatDays.split(",")
+        .mapNotNull { it.trim().toIntOrNull() }
+        .filter { it in Calendar.SUNDAY..Calendar.SATURDAY }
+        .toSet()
+    if (alarm.repeatDays.isNotBlank() && selectedDays.isEmpty()) return null
+
+    val candidate = Calendar.getInstance().apply {
+        timeInMillis = nowMillis
+        set(Calendar.HOUR_OF_DAY, alarm.hour)
+        set(Calendar.MINUTE, alarm.minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        if (timeInMillis <= nowMillis) add(Calendar.DAY_OF_YEAR, 1)
+    }
+
+    if (alarm.repeatDays.isBlank()) return candidate.timeInMillis
+
+    repeat(7) {
+        if (candidate.get(Calendar.DAY_OF_WEEK) in selectedDays) {
+            return candidate.timeInMillis
+        }
+        candidate.add(Calendar.DAY_OF_YEAR, 1)
+    }
+    return null
 }

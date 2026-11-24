@@ -1,48 +1,63 @@
 WAKEGUARD — DEVELOPMENT PROGRESS
-Updated: 2026-11-16
-CURRENT PHASE: Begin local Room database integration; existing alarm creation and ringing implemented.
+Updated: 2026-11-21
+Phase: Ringtone/custom audio and Light Mode status bar fixes confirmed by user; alarm reliability regression and Git push pending.
 
-USER-CONFIRMED IMPLEMENTATION
-[x] Android project created and run on physical realme RMX3868
-[x] Jetpack Compose alarm home UI and alarm creation
-[x] Alarm scheduling and triggering
-[x] Full-screen ringing Activity / ringing service
-[x] Dismiss and 5-minute snooze
-[x] 15-minute ringing timeout
-[x] Vibration
+SOURCE-EVIDENCED IMPLEMENTATION
+[x] Android Kotlin + Jetpack Compose alarm project; previously run on realme phone.
+[x] Alarm home screen with create, edit, enable/disable, select/delete.
+[x] Room AlarmEntity/DAO/database/repository integrated in shared MainActivity source.
+[x] AlarmManager scheduling and generation-aware alarm operations in shared source.
+[x] Repeat choices: once, weekdays, weekends, daily, custom.
+[x] Full-screen ringing Activity and foreground ringing service in source.
+[x] Snooze, vibration, dismiss and timeout implementation previously reported.
+[x] Swipe, Math and Shake dismissal flows and preview mode in source.
+[x] Configurable snooze minutes and Math/Shake challenge settings in editor.
+[x] App Light/Dark/System and independent ringing theme preferences via DataStore in recent supplied replacements.
+[x] Settings/editor Back navigation and nested dismissal/snooze BackHandler in recent supplied replacements.
+[x] Swipe chevron animation / Shake phone icon polish and optional alarm-name handling supplied as replacements.
 
-IMPLEMENTED / REORGANIZED, NEEDS REVERIFICATION
-[?] Refactored package structure cleaned of duplicate classes
-[?] Latest app builds after Git restoration / refactoring
-[?] Full-screen ringing retested on phone after latest edits
-[?] API 24 compatibility fix for ringing Activity compiled successfully
+NOT YET VERIFIED IN LATEST WORKING TREE
+[ ] Confirm all latest replacement files are actually installed in Android Studio project.
+[ ] Gradle :app:assembleDebug succeeds with latest changes.
+[ ] Physical-device smoke/regression test on current build.
+[ ] Room alarms survive app restart and schedule correctly.
+[ ] Preview Back returns to dismissal settings; dismissal Back returns to editor; editor Back returns to home.
+[ ] Light/Dark/System and independent ringing themes persist after restart and render correctly across Swipe/Math/Shake.
+[ ] Blank label is hidden; named alarm displays only its exact name; no Preview prefix.
+[ ] Confirm animations run smoothly and Shake sensor increments/finishes properly.
+[ ] Commit and push to Git remote; record branch and commit hash.
 
-CURRENT WORK — NOT COMPLETE
-[ ] Room dependencies configured and Gradle sync/build verified
-[ ] AlarmEntity, AlarmDao, database, repository integrated with UI
-[ ] Alarms persist after closing/relaunching app
-[ ] Enabled-state and edits persist
+RECENT CONFIRMATIONS (2026-11-19 TO 2026-11-21)
+[x] One-time alarm auto-disable and UI refresh via Room Flow: user previously confirmed working.
+[x] Custom ringtone file selection, display and preview: user explicitly confirmed working.
+[x] Light Mode status bar visibility: user confirmed fixed after updated WakeGuardTheme.kt.
+[x] Edited alarm auto-enable/reschedule logic present in latest inspected MainActivity.kt; device regression still pending.
+[~] Screen-off dismissal approximation for power-button behavior; not a true power-button detector and needs device testing.
+[!] Existing bundled ringtone collection rejected by user; no audio-quality approval yet.
+[!] Vibration previously reported not working; deferred.
 
-FUTURE
-[ ] Weekday repeating alarms and next-occurrence logic
-[ ] Reboot/time-change rescheduling
-[ ] Linked alarm groups with same-session cancellation
-[ ] Awake confirmation and optional math challenge
-[ ] Reliability tests (lock screen, Doze, permission changes, reboot)
-[ ] Release packaging
+FUTURE / PARTIAL
+[ ] Awake Check: configurable wait after dismissal, explicit awake confirmation, configurable response timeout and rerings; not implemented.
+[ ] Linked Alarm Groups: create/manage groups, session key, explicit awake confirmation, cancel only today's remaining linked occurrences.
+[ ] Reboot/time-change/time-zone rescheduling and robust reconciliation: inspect current receiver implementation and test.
+[x] Ringtone picker, per-alarm sound selection, Loud/Medium/Low sections and custom file picker in source.
+[ ] Replace disliked bundled ringtone audio with approved high-quality lyric-free music.
+[ ] Broad reliability matrix: locked screen, Doze, background/process death, permissions, overlap/snooze collision, reboot.
+[ ] Release APK/signing/distribution.
 
-PAST BUILD TROUBLESHOOTING
-- Missing Room runtime/ktx dependencies caused unresolved `androidx.room` imports.
-- KSP error: `unexpected jvm signature V`.
-- AGP 9 built-in Kotlin conflict: `Using kotlin.sourceSets DSL ... not allowed`.
-- AGP/Kotlin plugin class-cast: `ApplicationExtensionImpl ... cannot be cast to BaseExtension`.
-- After Git restore: redeclaration of AlarmReceiver and duplicate scheduler/service classes due to leftover refactored files.
-- `AlarmRingActivity.kt` API 27 calls with minSdk 24; guarded fix suggested but not confirmed built.
+HISTORY AND WARNINGS
+- Older November 16 documents incorrectly state Room is not integrated and challenges are future work; current shared source supersedes those statements.
+- Past AGP/KSP/Room integration errors: missing dependencies, KSP `unexpected jvm signature V`, built-in Kotlin source-set conflict, `BaseExtension` class-cast; do not upgrade Gradle speculatively.
+- Current actual AGP/Gradle/Kotlin versions and final build success have not been confirmed.
+- A successful Git push has NOT been observed in the chat.
 
-NEXT STEPS
-1. Check current Git status and Build Output; verify no duplicate classes.
-2. Confirm baseline alarm creation/ringing works.
-3. Inspect actual current Gradle versions before Room changes; avoid speculative upgrades/downgrades.
-4. Add Room in small verified increments; commit stable baseline and verified Room milestone.
+NEXT SESSION
+1. Confirm latest current source files and `git status --short`; request fresh ZIP/files if required.
+2. Run `.\gradlew.bat :app:assembleDebug`; do not claim build success without output.
+3. Test edited alarm re-enable, one-time auto-disable, custom audio persistence, real ringing, snooze, repeat, power/screen-off behavior, and reboot scenarios on device.
+4. Commit/push verified baseline; record branch/hash (not yet supplied).
+5. Implement Awake Check as next feature, with durable scheduling and explicit confirmation; Linked Alarm Groups afterward.
+6. Provide individual `.kt` files with exact replacement paths; use ZIP only for multiple audio assets or upon request.
 
-IMPORTANT: Never infer latest build success from earlier successes. The current on-disk tree has not been directly inspected.
+NEW THREAD STARTER
+"I'm continuing WakeGuard (`com.wakeguard.alarm`), an Android-only Kotlin/Jetpack Compose/Room alarm app. Read the four updated handoff docs. User-confirmed fixes: one-time alarm UI refresh, custom ringtone selection/filename/preview, and Light Mode status bar contrast. Ringtone UI has Loud/Medium/Low accordions plus Pick Custom; current bundled sounds are disliked and must be replaced with approved lyric-free musical audio later. Latest MainActivity source auto-enables/reschedules edited alarms, but full device regression and current clean build/Git push are not confirmed. Screen-off dismissal is only an approximation of power-button behavior; vibration remains deferred. NEXT: check Git/build, run focused alarm reliability regression, then implement persistent configurable Awake Check (wait after challenge, 'Are you still awake?', response timeout, re-ring). Linked Alarm Groups follow later. Ask for latest files before modifying, preserve working code, avoid speculative Gradle upgrades, and deliver individual full Kotlin files with exact paths."

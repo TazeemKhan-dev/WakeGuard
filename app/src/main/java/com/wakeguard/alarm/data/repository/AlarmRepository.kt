@@ -4,12 +4,16 @@ package com.wakeguard.alarm.data.repository
 import com.wakeguard.alarm.data.local.AlarmDao
 import com.wakeguard.alarm.data.local.AlarmEntity
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class AlarmRepository(
     private val alarmDao: AlarmDao
 ) {
+
+    fun observeAllAlarms(): Flow<List<AlarmEntity>> = alarmDao.observeAllAlarms()
+
 
     suspend fun insertAlarm(
         alarm: AlarmEntity

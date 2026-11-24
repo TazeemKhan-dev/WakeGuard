@@ -8,6 +8,7 @@ import androidx.room.Delete;
 import androidx.room.Query;
 
 import java.util.List;
+import kotlinx.coroutines.flow.Flow;
 
 @Dao
 public interface AlarmDao {
@@ -23,6 +24,9 @@ public interface AlarmDao {
 
     @Query("SELECT * FROM alarms ORDER BY hour ASC, minute ASC")
     List<AlarmEntity> getAllAlarms();
+
+    @Query("SELECT * FROM alarms ORDER BY hour ASC, minute ASC")
+    Flow<List<AlarmEntity>> observeAllAlarms();
 
     @Query("SELECT * FROM alarms WHERE id = :id LIMIT 1")
     AlarmEntity getAlarmById(long id);

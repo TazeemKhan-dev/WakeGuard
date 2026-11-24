@@ -49,5 +49,23 @@ data class AlarmEntity(
     val mathQuestionCount: Int = 3,
 
     @ColumnInfo(defaultValue = "10")
-    val shakeCount: Int = 10
+    val shakeCount: Int = 10,
+
+    @ColumnInfo(defaultValue = "0")
+    val awakeCheckEnabled: Boolean = false,
+
+    @ColumnInfo(defaultValue = "5")
+    val awakeCheckDelayMinutes: Int = 5,
+
+    @ColumnInfo(defaultValue = "60")
+    val awakeCheckTimeoutSeconds: Int = 60,
+
+    @ColumnInfo(defaultValue = "'EASY'")
+    val memoryDifficulty: String = "EASY",
+
+    @ColumnInfo(defaultValue = "3")
+    val memoryRounds: Int = 3,
+
+    @ColumnInfo(defaultValue = "10")
+    val memoryDurationSeconds: Int = 10
 )

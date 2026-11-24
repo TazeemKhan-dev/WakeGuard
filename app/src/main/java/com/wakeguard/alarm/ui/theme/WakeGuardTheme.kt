@@ -1,5 +1,11 @@
 package com.wakeguard.alarm.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -34,7 +40,17 @@ fun WakeGuardTheme(mode: ThemeMode, content: @Composable () -> Unit) {
         ThemeMode.DARK -> true
         ThemeMode.SYSTEM -> systemDark
     }
-    SideEffect { WakeGuardColors.update(dark) }
+    val context = LocalContext.current
+    val view = LocalView.current
+    SideEffect {
+        WakeGuardColors.update(dark)
+        val activity = context.findActivity()
+        if (activity != null) {
+            // Android calls this "light status bars" when the icons are dark.
+            WindowInsetsControllerCompat(activity.window, view)
+                .isAppearanceLightStatusBars = !dark
+        }
+    }
     MaterialTheme(
         colorScheme = if (dark) darkColorScheme(
             primary = WakeGuardColors.primary,
@@ -51,4 +67,10 @@ fun WakeGuardTheme(mode: ThemeMode, content: @Composable () -> Unit) {
             onBackground = WakeGuardColors.text
         ), content = content
     )
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

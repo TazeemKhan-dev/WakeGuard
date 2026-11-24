@@ -30,6 +30,17 @@ class AlarmRingActivity : ComponentActivity() {
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
 
+        renderAlarm(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        recreate()
+    }
+
+    private fun renderAlarm(intent: Intent) {
+        val token = intent.getStringExtra("ring_token")
         val label = intent.getStringExtra("alarm_label") ?: ""
 
         val snoozeMinutes = intent
@@ -42,32 +53,40 @@ class AlarmRingActivity : ComponentActivity() {
         val questionCount = intent.getIntExtra("math_question_count", 3).coerceIn(1, 10)
         val shakeCount = intent.getIntExtra("shake_count", 10).coerceIn(1, 30)
 
+        val memoryDifficulty = intent.getStringExtra("memory_difficulty") ?: "EASY"
+        val memoryRounds = intent.getIntExtra("memory_rounds", 3).coerceIn(1, 10)
+        val memoryDurationSeconds = intent.getIntExtra("memory_duration_seconds", 10).coerceIn(5, 10)
+
         setContent {
             ChallengeRouter(
                 challengeType = challenge,
                 mathDifficulty = difficulty,
                 mathQuestionCount = questionCount,
                 shakeCount = shakeCount,
+                memoryDifficulty = memoryDifficulty,
+                memoryRounds = memoryRounds,
+                memoryDurationSeconds = memoryDurationSeconds,
                 previewMode = preview,
                 label = label,
                 snoozeMinutes = snoozeMinutes,
                 onDismiss = {
-                    if (preview) finish() else sendAlarmAction(AlarmRingingService.ACTION_DISMISS)
+                    if (preview) finish() else sendAlarmAction(AlarmRingingService.ACTION_DISMISS, token)
                 },
                 onSnooze = {
-                    if (preview) finish() else sendAlarmAction(AlarmRingingService.ACTION_SNOOZE)
+                    if (preview) finish() else sendAlarmAction(AlarmRingingService.ACTION_SNOOZE, token)
                 },
                 onExitPreview = { finish() }
             )
         }
     }
 
-    private fun sendAlarmAction(actionName: String) {
+    private fun sendAlarmAction(actionName: String, token: String?) {
         val serviceIntent = Intent(
             this,
             AlarmRingingService::class.java
         ).apply {
             action = actionName
+            putExtra("ring_token", token)
         }
 
         startService(serviceIntent)
