@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.collect
 import com.wakeguard.alarm.service.AlarmRingingService
 import com.wakeguard.alarm.ui.ringing.challenges.ChallengeRouter
 
@@ -58,6 +60,13 @@ class AlarmRingActivity : ComponentActivity() {
         val memoryDurationSeconds = intent.getIntExtra("memory_duration_seconds", 10).coerceIn(5, 10)
 
         setContent {
+            LaunchedEffect(token, preview) {
+                if (!preview) {
+                    AlarmRingingService.activeRingToken.collect { active ->
+                        if (active != token || active == null) finish()
+                    }
+                }
+            }
             ChallengeRouter(
                 challengeType = challenge,
                 mathDifficulty = difficulty,

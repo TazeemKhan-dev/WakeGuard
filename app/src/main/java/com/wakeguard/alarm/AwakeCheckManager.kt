@@ -55,6 +55,7 @@ object AwakeCheckManager {
             true
         } catch (e: SecurityException) { Log.e("WakeGuard", "Awake Check exact alarm denied", e); false }
     }
+    @Synchronized
     fun start(context: Context, alarmId: Int, generation: Long, delayMinutes: Int, timeoutSeconds: Int, occurrence: Long = System.currentTimeMillis()): Boolean {
         cancel(context, alarmId)
         val prompt = System.currentTimeMillis() + delayMinutes.coerceIn(1, 1440) * 60_000L
@@ -66,6 +67,7 @@ object AwakeCheckManager {
         cancel(context, alarmId)
         return false
     }
+    @Synchronized
     fun cancel(context: Context, alarmId: Int) {
         val c = read(context, alarmId) ?: return
         listOf(ACTION_PROMPT, ACTION_TIMEOUT).forEach { action ->
@@ -77,6 +79,13 @@ object AwakeCheckManager {
         val notifications = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         notifications.cancel(notificationId(alarmId))
     }
+    @Synchronized
+    fun cancelMatching(context: Context, id: Int, token: String): Boolean {
+        if (matches(context, id, token) == null) return false
+        cancel(context, id)
+        return read(context, id) == null
+    }
+
     fun notificationId(id: Int) = 800000 + (id and 0x7fffffff) % 100000
     fun restore(context: Context) {
         all(context).forEach { c ->

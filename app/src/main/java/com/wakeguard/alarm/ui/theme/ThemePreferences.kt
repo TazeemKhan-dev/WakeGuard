@@ -23,7 +23,40 @@ data class AlarmDefaults(
     val awakeCheckTimeoutSeconds: Int = 60
 )
 
+enum class PowerButtonAction { NONE, SNOOZE, DISMISS }
+
+data class PowerButtonSettings(
+    val action: PowerButtonAction = PowerButtonAction.NONE,
+    val useAlarmDuration: Boolean = true,
+    val snoozeMinutes: Int = 5
+)
+
 class ThemePreferences(private val context: Context) {
+    private val ringingDurationKey = intPreferencesKey("ringing_duration_minutes")
+    // Zero means no automatic timeout.
+    val ringingDurationMinutes: Flow<Int> = context.wakeGuardThemeDataStore.data.map {
+        (it[ringingDurationKey] ?: 0).coerceIn(0, 1440)
+    }
+    suspend fun setRingingDurationMinutes(minutes: Int) {
+        context.wakeGuardThemeDataStore.edit { it[ringingDurationKey] = minutes.coerceIn(0, 1440) }
+    }
+    private val powerActionKey = stringPreferencesKey("power_button_action")
+    private val powerUseAlarmKey = booleanPreferencesKey("power_button_use_alarm_duration")
+    private val powerMinutesKey = intPreferencesKey("power_button_snooze_minutes")
+    val powerButtonSettings: Flow<PowerButtonSettings> = context.wakeGuardThemeDataStore.data.map { p ->
+        PowerButtonSettings(
+            runCatching { PowerButtonAction.valueOf(p[powerActionKey] ?: "NONE") }.getOrDefault(PowerButtonAction.NONE),
+            p[powerUseAlarmKey] ?: true,
+            (p[powerMinutesKey] ?: 5).coerceIn(1, 60)
+        )
+    }
+    suspend fun setPowerButtonSettings(settings: PowerButtonSettings) {
+        context.wakeGuardThemeDataStore.edit {
+            it[powerActionKey] = settings.action.name
+            it[powerUseAlarmKey] = settings.useAlarmDuration
+            it[powerMinutesKey] = settings.snoozeMinutes.coerceIn(1, 60)
+        }
+    }
     private val snoozeKey = intPreferencesKey("default_snooze_minutes")
     private val awakeEnabledKey = booleanPreferencesKey("default_awake_enabled")
     private val awakeDelayKey = intPreferencesKey("default_awake_delay_minutes")

@@ -2,6 +2,15 @@ package com.wakeguard.alarm.ui.ringing
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,19 +44,25 @@ fun AlarmRingScreen(
     val blue = AlarmPalette.accent(dark)
     val muted = AlarmPalette.muted(dark)
     val panel = AlarmPalette.panel(dark)
-    val time = remember { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date()) }
-    val date = remember { SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) { now = System.currentTimeMillis(); delay(1000L) }
+    }
+    val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(now))
+    val date = SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date(now))
+    val travel = with(LocalDensity.current) { 132.dp.toPx() }
+    val haptic = LocalHapticFeedback.current
+    val dismiss by rememberUpdatedState(onDismiss)
     var dragDistance by remember { mutableFloatStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    var completed by remember { mutableStateOf(false) }
+    val progress = (dragDistance / travel).coerceIn(0f, 1f)
+    val lift by animateFloatAsState(dragDistance, animationSpec = if (dragging) snap() else spring(stiffness = Spring.StiffnessMedium), label = "handle")
     val infinite = rememberInfiniteTransition(label = "swipe chevrons")
-    val pulse by infinite.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1450, easing = LinearEasing), RepeatMode.Restart),
-        label = "upward movement"
-    )
-    val lift by animateFloatAsState(
-        targetValue = (-dragDistance / 5f).coerceIn(0f, 36f),
-        animationSpec = spring(stiffness = Spring.StiffnessMedium), label = "swipe lift"
-    )
+    val pulse by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "wave")
+    LaunchedEffect(completed) {
+        if (completed) { delay(180L); dismiss() }
+    }
 
     Column(
         Modifier.fillMaxSize().background(
@@ -80,43 +95,56 @@ fun AlarmRingScreen(
                 fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.weight(1.1f))
-        Column(
-            modifier = Modifier.fillMaxWidth().height(222.dp)
-                .background(panel.copy(alpha = if (dark) 0.98f else 0.88f), RoundedCornerShape(34.dp))
-                .pointerInput(onDismiss) {
+        Box(
+            Modifier.width(94.dp).height(218.dp)
+                .background(panel, RoundedCornerShape(48.dp))
+                .border(1.dp, blue.copy(alpha = 0.22f), RoundedCornerShape(48.dp))
+                .pointerInput(travel) {
                     detectVerticalDragGestures(
-                        onDragStart = { dragDistance = 0f },
+                        onDragStart = { if (!completed) { dragging = true; dragDistance = 0f } },
                         onDragEnd = {
-                            if (dragDistance < -110f) onDismiss()
-                            dragDistance = 0f
+                            dragging = false
+                            if (!completed && dragDistance >= travel * 0.78f) {
+                                completed = true
+                                dragDistance = travel
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } else if (!completed) dragDistance = 0f
                         },
-                        onDragCancel = { dragDistance = 0f },
+                        onDragCancel = { dragging = false; if (!completed) dragDistance = 0f },
                         onVerticalDrag = { change, amount ->
                             change.consume()
-                            dragDistance += amount
+                            if (!completed) dragDistance = (dragDistance - amount).coerceIn(0f, travel)
                         }
                     )
-                },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                }, contentAlignment = Alignment.BottomCenter
         ) {
-            Column(
-                modifier = Modifier.graphicsLayer { translationY = -lift },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy((-9).dp)
-            ) {
+            Column(Modifier.align(Alignment.TopCenter).padding(top = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { index ->
-                    val phase = (pulse + index * 0.28f) % 1f
-                    val alpha = (0.3f + 0.7f * (1f - phase)).coerceIn(0f, 1f)
-                    Text("⌃", color = blue.copy(alpha = alpha), fontSize = 49.sp,
-                        lineHeight = 40.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.graphicsLayer { translationY = -phase * 10f })
+                    val phase = (pulse + index * 0.24f) % 1f
+                    Chevron(blue.copy(alpha = (0.25f + 0.75f * (1f - phase)) * (1f - progress)), Modifier.size(24.dp, 14.dp))
                 }
             }
-            Spacer(Modifier.height(22.dp))
-            Text("Swipe up to stop alarm", color = ink, fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold)
+            Box(Modifier.padding(bottom = 8.dp).graphicsLayer { translationY = -lift }
+                .size(70.dp).background(blue, CircleShape), contentAlignment = Alignment.Center) {
+                if (completed) Text("✓", color = if (dark) Color(0xFF101018) else Color.White, fontSize = 30.sp)
+                else Chevron(if (dark) Color(0xFF101018) else Color.White, Modifier.size(30.dp, 20.dp))
+            }
         }
+        Spacer(Modifier.height(14.dp))
+        Text(if (completed) "Alarm dismissed" else if (progress >= 0.78f) "Release to dismiss" else "Swipe up to dismiss",
+            color = ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text("Slide the handle upward", color = muted, fontSize = 13.sp)
         Spacer(Modifier.height(22.dp))
+    }
+}
+
+@Composable
+private fun Chevron(color: Color, modifier: Modifier) {
+    Canvas(modifier) {
+        val top = Offset(size.width / 2f, size.height * 0.2f)
+        drawLine(color, Offset(size.width * 0.15f, size.height * 0.8f), top, 3.dp.toPx(), StrokeCap.Round)
+        drawLine(color, top, Offset(size.width * 0.85f, size.height * 0.8f), 3.dp.toPx(), StrokeCap.Round)
     }
 }

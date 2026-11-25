@@ -34,18 +34,18 @@ class AwakeCheckReceiver : BroadcastReceiver() {
                     .firstOrNull { it.schedulerId == id }
                 if (A.matches(app, id, token) == null) return@launch
                 if (alarm == null || alarm.scheduleGeneration != check.generation || !alarm.awakeCheckEnabled) {
-                    A.cancel(app, id)
+                    A.cancelMatching(app, id, token)
                     return@launch
                 }
                 if (LinkedAlarmManager.isSkipped(app, id, check.occurrence)) {
-                    A.cancel(app, id)
+                    A.cancelMatching(app, id, token)
                     return@launch
                 }
                 when (intent.action) {
                     A.ACTION_CONFIRM -> {
                         // Reject confirmations arriving after the response deadline.
                         if (System.currentTimeMillis() >= check.deadlineAt) return@launch
-                        A.cancel(app, id)
+                        if (!A.cancelMatching(app, id, token)) return@launch
                         LinkedAlarmManager.confirm(app, alarm, check.occurrence)
                     }
                     A.ACTION_PROMPT -> {
@@ -65,6 +65,8 @@ class AwakeCheckReceiver : BroadcastReceiver() {
                             putExtra("alarm_id", id)
                             putExtra(A.EXTRA_TOKEN, token)
                         }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                        synchronized(A) {
+                        if (A.matches(app, id, token) == null) return@launch
                         nm.notify(A.notificationId(id), NotificationCompat.Builder(app, "wakeguard_awake_v1")
                             .setSmallIcon(R.drawable.ic_lock_idle_alarm)
                             .setContentTitle("Are you still awake?")
@@ -77,10 +79,11 @@ class AwakeCheckReceiver : BroadcastReceiver() {
                             .setPriority(NotificationCompat.PRIORITY_HIGH)
                             .addAction(R.drawable.ic_input_add, "I'm Awake", confirm)
                             .build())
+                        }
                     }
                     A.ACTION_TIMEOUT -> {
                         if (System.currentTimeMillis() < check.deadlineAt) return@launch
-                        A.cancel(app, id)
+                        if (!A.cancelMatching(app, id, token)) return@launch
                         // One-time alarms may be disabled after dismissal; rerings are deliberately
                         // dispatched from the validated saved record, not through the normal receiver.
                         val ring = Intent(app, AlarmRingingService::class.java).apply {

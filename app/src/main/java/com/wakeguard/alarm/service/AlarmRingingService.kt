@@ -33,10 +33,17 @@ import com.wakeguard.alarm.data.local.WakeGuardDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.wakeguard.alarm.ui.theme.ThemePreferences
+import com.wakeguard.alarm.ui.theme.PowerButtonAction
 
 class AlarmRingingService : Service() {
 
     companion object {
+        private val activeToken = MutableStateFlow<String?>(null)
+        val activeRingToken = activeToken.asStateFlow()
         const val ACTION_RECOVER = "wakeguard.RECOVER_RINGING"
         const val ACTION_START = "wakeguard.START"
         const val ACTION_NOTIFICATION_DISMISS = "wakeguard.NOTIFICATION_DISMISS"
@@ -49,7 +56,6 @@ class AlarmRingingService : Service() {
         private const val RECOVERY_NOTIFICATION_ID = 7002
         private const val RECOVERY_CHANNEL_ID = "wakeguard_recovery_v1"
 
-        const val TIMEOUT_MS = 15 * 60 * 1000L
         const val SNOOZE_MINUTES = 5
     }
 
@@ -79,16 +85,34 @@ class AlarmRingingService : Service() {
     private var ringToken = ""
     private var isRinging = false
     private var screenOffReceiverRegistered = false
+    private var powerActionPending = false
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF && isRinging) {
-                onStartCommand(
-                    Intent(this@AlarmRingingService, AlarmRingingService::class.java).apply {
-                        action = ACTION_SCREEN_OFF_STOP
-                    },
-                    0,
-                    0
-                )
+            val action = intent?.action ?: return
+            if (action != Intent.ACTION_SCREEN_OFF || !isRinging || powerActionPending) return
+            val token = ringToken
+            powerActionPending = true
+            CoroutineScope(Dispatchers.Main).launch {
+                try {
+                    val settings = ThemePreferences(applicationContext).powerButtonSettings.first()
+                    if (destroyed || !isRinging || token != ringToken) return@launch
+                    when (settings.action) {
+                        PowerButtonAction.NONE -> Unit
+                        PowerButtonAction.SNOOZE -> snoozeCurrent(if (settings.useAlarmDuration) currentSnoozeMinutes else settings.snoozeMinutes)
+                        PowerButtonAction.DISMISS -> {
+                            if (currentChallengeType.equals("SWIPE", ignoreCase = true)) {
+                                onStartCommand(Intent(this@AlarmRingingService, AlarmRingingService::class.java).apply {
+                                    this.action = ACTION_NOTIFICATION_DISMISS
+                                    putExtra("ring_token", token)
+                                }, 0, 0)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("WakeGuard", "Power button action failed", e)
+                } finally {
+                    if (token == ringToken) powerActionPending = false
+                }
             }
         }
     }
@@ -158,23 +182,7 @@ class AlarmRingingService : Service() {
 
             ACTION_SNOOZE -> {
                 if (isRinging && intent.getStringExtra("ring_token") == ringToken) {
-                    val scheduled = AlarmScheduler.snooze(
-                        context = this,
-                        alarmId = currentAlarmId,
-                        label = currentLabel,
-                        minutes = currentSnoozeMinutes,
-                        generation = currentGeneration,
-                        occurrence = currentOccurrence
-                    )
-
-                    if (scheduled) {
-                        stopRinging()
-                    } else {
-                        Log.e(
-                            "WakeGuard",
-                            "Snooze could not be scheduled"
-                        )
-                    }
+                    snoozeCurrent(currentSnoozeMinutes)
                 }
             }
 
@@ -195,6 +203,12 @@ class AlarmRingingService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun snoozeCurrent(minutes: Int) {
+        if (!isRinging) return
+        val scheduled = AlarmScheduler.snooze(context = this, alarmId = currentAlarmId, label = currentLabel, minutes = minutes.coerceIn(1, 60), generation = currentGeneration, occurrence = currentOccurrence)
+        if (scheduled) stopRinging() else Log.e("WakeGuard", "Snooze could not be scheduled")
     }
 
     private fun sameSession(a: Intent, b: Intent): Boolean =
@@ -245,6 +259,8 @@ class AlarmRingingService : Service() {
 
     private fun startRinging() {
         isRinging = true
+        powerActionPending = false
+        activeToken.value = ringToken
 
         val notification = buildNotification()
 
@@ -272,17 +288,29 @@ class AlarmRingingService : Service() {
         Log.d("WakeGuard", "Notifications enabled=${notificationManager.areNotificationsEnabled()}")
 
         if (!screenOffReceiverRegistered) {
-            registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+            registerReceiver(screenOffReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+            })
             screenOffReceiverRegistered = true
         }
         startSound()
         if (currentVibrationEnabled) startVibration()
 
         handler.removeCallbacks(timeoutRunnable)
-        handler.postDelayed(
-            timeoutRunnable,
-            TIMEOUT_MS
-        )
+        val token = ringToken
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        CoroutineScope(Dispatchers.Main).launch {
+            val minutes = try {
+                ThemePreferences(applicationContext).ringingDurationMinutes.first()
+            } catch (e: Exception) {
+                Log.e("WakeGuard", "Could not read ringing duration; using unlimited", e)
+                0
+            }
+            if (!destroyed && isRinging && token == ringToken && minutes > 0) {
+                val remaining = minutes * 60_000L - (android.os.SystemClock.elapsedRealtime() - startedAt)
+                handler.postDelayed(timeoutRunnable, remaining.coerceAtLeast(0L))
+            }
+        }
     }
 
     private fun startSound() {
@@ -471,6 +499,7 @@ class AlarmRingingService : Service() {
         handler.removeCallbacks(timeoutRunnable)
 
         isRinging = false
+        activeToken.value = null
 
         try {
             mediaPlayer?.let {
@@ -536,6 +565,7 @@ class AlarmRingingService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        if (activeToken.value == ringToken) activeToken.value = null
         if (screenOffReceiverRegistered) {
             runCatching { unregisterReceiver(screenOffReceiver) }
             screenOffReceiverRegistered = false

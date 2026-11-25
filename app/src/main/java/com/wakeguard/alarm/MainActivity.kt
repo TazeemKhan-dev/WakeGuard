@@ -29,10 +29,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
+import com.wakeguard.alarm.ui.theme.AlarmDefaults
 import com.wakeguard.alarm.ui.theme.AlarmScreenTheme
 import com.wakeguard.alarm.ui.theme.ThemeMode
 import com.wakeguard.alarm.ui.theme.ThemePreferences
-import com.wakeguard.alarm.ui.theme.AlarmDefaults
 import com.wakeguard.alarm.ui.theme.WakeGuardTheme
 import com.wakeguard.alarm.ui.theme.WakeGuardColors as W
 import com.wakeguard.alarm.ui.settings.SettingsScreen
@@ -69,23 +69,17 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             val selectedMode by preferences.mode.collectAsState(initial = ThemeMode.SYSTEM)
             val selectedAlarmMode by preferences.alarmScreenMode.collectAsState(initial = AlarmScreenTheme.DARK)
-            val defaults by preferences.alarmDefaults.collectAsState(initial = null)
+            val alarmDefaults by preferences.alarmDefaults.collectAsState(initial = null)
             WakeGuardTheme(selectedMode) {
-                val loadedDefaults = defaults
-                if (loadedDefaults == null) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                } else {
+                val defaults = alarmDefaults ?: return@WakeGuardTheme
                 WakeGuardHome(
+                    alarmDefaults = defaults,
+                    onAlarmDefaultsChange = { newDefaults -> scope.launch { preferences.setAlarmDefaults(newDefaults) } },
                     themeMode = selectedMode,
                     onThemeChange = { newMode -> scope.launch { preferences.setMode(newMode) } },
-                    alarmDefaults = loadedDefaults,
-                    onAlarmDefaultsChange = { value -> scope.launch { preferences.setAlarmDefaults(value) } },
                     alarmScreenMode = selectedAlarmMode,
                     onAlarmScreenThemeChange = { newMode -> scope.launch { preferences.setAlarmScreenMode(newMode) } }
                 )
-                }
             }
         }
     }
@@ -131,6 +125,8 @@ fun WakeGuardHome(
     var editingAlarm by remember { mutableStateOf<AlarmEntity?>(null) }
     var showEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showUpcoming by remember { mutableStateOf(false) }
+    val upcomingAlerts by com.wakeguard.alarm.upcoming.rememberUpcomingAlerts(context)
 
     fun showMessage(message: String) {
         Toast.makeText(
@@ -231,7 +227,7 @@ fun WakeGuardHome(
 
     val nextAlarmTimeMillis = alarms.asSequence()
         .filter { it.isEnabled }
-        .mapNotNull { nextAlarmOccurrenceMillis(it, currentTimeMillis) }
+        .mapNotNull { nextUnskippedOccurrence(context, it, currentTimeMillis) }
         .minOrNull()
 
     val nextAlarmSummary = nextAlarmTimeMillis?.let { occurrence ->
@@ -254,14 +250,20 @@ fun WakeGuardHome(
             .ifBlank { "less than a minute" }
     } ?: "No alarms set"
 
-    BackHandler(enabled = showSettings || showEditor) {
+    BackHandler(enabled = showSettings || showEditor || showUpcoming) {
         when {
+            showUpcoming -> showUpcoming = false
             showSettings -> showSettings = false
             showEditor && !isBusy -> {
                 showEditor = false
                 editingAlarm = null
             }
         }
+    }
+
+    if (showUpcoming) {
+        com.wakeguard.alarm.upcoming.UpcomingAlertsScreen(upcomingAlerts) { showUpcoming = false }
+        return
     }
 
     if (showSettings) {
@@ -288,6 +290,8 @@ fun WakeGuardHome(
                     isBusy = true
                     scope.launch {
                         val old = editingAlarm
+                        var previousSkips: String? = null
+                        var skipsCleared = false
                         var createdId: Long? = null
                         var createdAlarm: AlarmEntity? = null
                         var updated: AlarmEntity? = null
@@ -355,17 +359,6 @@ fun WakeGuardHome(
 
 
                             } else {
-                                val changed = old.hour != hour || old.minute != minute ||
-                                        old.label != label || old.repeatDays != repeatDays ||
-                                        old.vibrationEnabled != vibrate || old.snoozeMinutes != snooze ||
-                                        old.challengeType != challenge || old.mathDifficulty != difficulty ||
-                                        old.mathQuestionCount != questions || old.shakeCount != shakes ||
-                                        old.memoryDifficulty != memoryDifficulty || old.memoryRounds != memoryRounds ||
-                                        old.memoryDurationSeconds != memoryDurationSeconds ||
-                                        old.soundUri != soundUri || old.awakeCheckEnabled != awakeEnabled ||
-                                        old.awakeCheckDelayMinutes != awakeDelay || old.awakeCheckTimeoutSeconds != awakeTimeout ||
-                                        old.groupId != linkedGroupId || !old.isEnabled
-                                if (changed) {
                                     val next = old.copy(
                                         hour = hour, minute = minute, label = label,
                                         repeatDays = repeatDays, vibrationEnabled = vibrate,
@@ -381,6 +374,8 @@ fun WakeGuardHome(
                                         scheduleGeneration = old.scheduleGeneration + 1L,
                                         isEnabled = true
                                     )
+                                    previousSkips = LinkedAlarmManager.clearSkipsForEdit(context, old.schedulerId)
+                                    skipsCleared = true
                                     repository.updateAlarm(next)
                                     updated = next
                                     if (next.isEnabled && !AlarmScheduler.schedule(
@@ -388,12 +383,14 @@ fun WakeGuardHome(
                                             next.label, next.scheduleGeneration, next.repeatDays
                                         )) {
                                         repository.updateAlarm(old)
+                                        AlarmScheduler.cancel(context, next.schedulerId, next.scheduleGeneration)
+                                        LinkedAlarmManager.restoreSkipsAfterFailedEdit(context, old.schedulerId, previousSkips)
+                                        skipsCleared = false
                                         updated = null
                                         showMessage("Exact alarm permission required")
                                         requestExactAlarmPermission()
                                         return@launch
                                     }
-                                }
                             }
                             for (member in groupMembers) {
                                 if (member.groupId != linkedGroupId) {
@@ -420,6 +417,9 @@ fun WakeGuardHome(
                             updated?.let { next ->
                                 try { repository.updateAlarm(old!!) } catch (_: Exception) { }
                                 AlarmScheduler.cancel(context, next.schedulerId, next.scheduleGeneration)
+                            }
+                            if (old != null && skipsCleared) {
+                                try { LinkedAlarmManager.restoreSkipsAfterFailedEdit(context, old.schedulerId, previousSkips) } catch (_: Exception) { }
                             }
                             showMessage("Could not save alarm")
                         } finally { isBusy = false }
@@ -453,6 +453,20 @@ fun WakeGuardHome(
                         fontWeight = FontWeight.Bold)
                     Text(nextAlarmSummary, color = Muted, fontSize = 13.sp)
                 }
+                IconButton(onClick = { showUpcoming = true }) {
+                    BadgedBox(badge = {
+                        if (upcomingAlerts.isNotEmpty()) Badge { Text(upcomingAlerts.size.toString()) }
+                    }) {
+                        val ink = W.primary
+                        androidx.compose.foundation.Canvas(Modifier.size(25.dp)) {
+                            val stroke = 2.dp.toPx()
+                            drawCircle(ink, radius = size.minDimension / 2 - stroke,
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                            drawLine(ink, center, center.copy(y = center.y - size.height / 4), stroke)
+                            drawLine(ink, center, center.copy(x = center.x + size.width / 5), stroke)
+                        }
+                    }
+                }
                 IconButton(onClick = { showSettings = true }) {
                     Text("⚙", fontSize = 27.sp, color = W.primary)
                 }
@@ -470,8 +484,11 @@ fun WakeGuardHome(
                 key = { it.id }
             ) { alarm ->
 
+                val skippedAt = skippedNextOccurrence(context, alarm, currentTimeMillis)
                 AlarmCard(
                     alarm = alarm,
+                    skippedAt = skippedAt,
+                    resumesAt = if (skippedAt != null) nextUnskippedOccurrence(context, alarm, currentTimeMillis) else null,
                     onToggle = { enabled ->
                         if (!isBusy) {
                             if (!enabled && (alarm.repeatDays.isNotBlank() || (alarm.groupId != null && alarms.any { it.groupId == alarm.groupId && it.repeatDays.isNotBlank() }))) {
@@ -495,7 +512,7 @@ fun WakeGuardHome(
                                                 showMessage("An alarm already exists at this time")
                                                 return@launch
                                             }
-                                            if (!LinkedAlarmManager.setEnabled(context, targets, true)) {
+                                            if (!LinkedAlarmManager.setEnabled(context, targets, true, restoreSkippedDate = skippedAt)) {
                                                 showMessage("Could not enable alarms. Check exact alarm permission.")
                                                 requestExactAlarmPermission()
                                                 return@launch
@@ -562,27 +579,26 @@ fun WakeGuardHome(
     alarmToDisable?.let { alarm ->
         val next = AlarmScheduler.nextOccurrenceMillis(alarm.hour, alarm.minute,
             alarm.repeatDays, currentTimeMillis)
-        val dayName = next?.let { time ->
-            val now = Calendar.getInstance()
-            val target = Calendar.getInstance().apply { timeInMillis = time }
-            val today = now.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
-                    now.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR)
-            val tomorrow = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-            when {
-                today -> "today"
-                tomorrow.get(Calendar.YEAR) == target.get(Calendar.YEAR) &&
-                        tomorrow.get(Calendar.DAY_OF_YEAR) == target.get(Calendar.DAY_OF_YEAR) -> "tomorrow"
-                else -> java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault()).format(time)
-            }
-        } ?: "next occurrence"
-        AlertDialog(
-            onDismissRequest = { if (!isBusy) alarmToDisable = null },
-            title = { Text("Turn off recurring alarm?") },
-            text = { Text(if (alarm.groupId != null) "This action applies to all linked alarms."
-            else "Choose whether to skip the next occurrence or turn off this alarm.") },
-            confirmButton = {
-                Column {
-                    TextButton(enabled = !isBusy, onClick = {
+        val dayName = next?.let { skipDayLabel(it) } ?: "next occurrence"
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { if (!isBusy) alarmToDisable = null }
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                color = W.subtle
+            ) {
+                Column(Modifier.padding(24.dp)) {
+                    Text("Turn off alarm?", color = W.text, fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(16.dp))
+                    Text(formatTime(alarm.hour, alarm.minute), color = W.text,
+                        fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(if (alarm.groupId != null) "Applies to all linked alarms." else
+                        "Choose how long to turn off this alarm.", color = W.secondary, fontSize = 14.sp)
+                    Spacer(Modifier.height(24.dp))
+                    TextButton(enabled = !isBusy && next != null, onClick = {
                         if (next != null && !isBusy) {
                             isBusy = true
                             scope.launch {
@@ -599,7 +615,13 @@ fun WakeGuardHome(
                                 finally { isBusy = false }
                             }
                         }
-                    }) { Text("Skip $dayName") }
+                    }, modifier = Modifier.fillMaxWidth().background(W.card, RoundedCornerShape(14.dp))) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp)) {
+                            Text("Skip $dayName", color = Accent, fontWeight = FontWeight.SemiBold)
+                            Text("Automatically resumes after the skipped occurrence.", color = W.secondary, fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     TextButton(enabled = !isBusy, onClick = {
                         isBusy = true
                         scope.launch {
@@ -617,12 +639,23 @@ fun WakeGuardHome(
                             } catch (_: Exception) { showMessage("Could not turn off alarms") }
                             finally { isBusy = false }
                         }
-                    }) { Text("Turn off recurring alarm") }
+                    }, modifier = Modifier.fillMaxWidth().background(W.card, RoundedCornerShape(14.dp))) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp)) {
+                            Text("Turn off alarm", color = Accent, fontWeight = FontWeight.SemiBold)
+                            Text("Remains off until you enable it again.", color = W.secondary, fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    HorizontalDivider(color = W.outline)
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        enabled = !isBusy,
+                        onClick = { alarmToDisable = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Cancel", color = Accent) }
                 }
-            },
-            dismissButton = { TextButton(enabled = !isBusy,
-                onClick = { alarmToDisable = null }) { Text("Cancel") } }
-        )
+            }
+        }
     }
 
     alarmToDelete?.let { alarm ->
@@ -690,7 +723,9 @@ fun AlarmCard(
     selectionMode: Boolean,
     onLongPress: () -> Unit,
     onSelect: () -> Unit,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    skippedAt: Long? = null,
+    resumesAt: Long? = null
 ) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 6.dp)
@@ -704,11 +739,11 @@ fun AlarmCard(
             horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatTime(alarm.hour, alarm.minute), fontSize = 31.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (alarm.isEnabled) W.text else W.secondary)
+                color = if (alarm.isEnabled && skippedAt == null) W.text else W.secondary)
             if (selectionMode) {
                 Checkbox(checked = selected, onCheckedChange = { onSelect() })
             } else {
-                Switch(checked = alarm.isEnabled, onCheckedChange = onToggle, enabled = enabled,
+                Switch(checked = alarm.isEnabled && skippedAt == null, onCheckedChange = onToggle, enabled = enabled,
                     colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = Color.White))
             }
         }
@@ -729,6 +764,13 @@ fun AlarmCard(
             "1,7" -> "Weekends"
             else -> "Custom repeat"
         }, color = Muted, fontSize = 13.sp)
+        if (skippedAt != null) {
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = W.outline)
+            Spacer(Modifier.height(10.dp))
+            Text("Skipped ${skipDayLabel(skippedAt)}", color = Accent, fontWeight = FontWeight.Medium)
+            resumesAt?.let { Text("Resumes " + java.text.SimpleDateFormat("EEE, d MMM · h:mm a", java.util.Locale.getDefault()).format(it), color = Muted, fontSize = 12.sp) }
+        }
     }
 }
 
@@ -820,4 +862,28 @@ private fun nextAlarmOccurrenceMillis(alarm: AlarmEntity, nowMillis: Long): Long
         candidate.add(Calendar.DAY_OF_YEAR, 1)
     }
     return null
+}
+
+private fun skipDayLabel(at: Long): String {
+    val now = Calendar.getInstance()
+    val target = Calendar.getInstance().apply { timeInMillis = at }
+    fun same(a: Calendar, b: Calendar) = a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+    if (same(now, target)) return "today"
+    now.add(Calendar.DAY_OF_YEAR, 1)
+    if (same(now, target)) return "tomorrow"
+    return java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault()).format(at)
+}
+
+private fun skippedNextOccurrence(context: Context, alarm: AlarmEntity, now: Long): Long? {
+    if (!alarm.isEnabled || alarm.repeatDays.isBlank()) return null
+    return nextAlarmOccurrenceMillis(alarm, now)?.takeIf { LinkedAlarmManager.isSkipped(context, alarm.schedulerId, it) }
+}
+
+private fun nextUnskippedOccurrence(context: Context, alarm: AlarmEntity, now: Long): Long? {
+    var next = nextAlarmOccurrenceMillis(alarm, now) ?: return null
+    if (alarm.repeatDays.isBlank()) return next
+    while (LinkedAlarmManager.isSkipped(context, alarm.schedulerId, next)) {
+        next = nextAlarmOccurrenceMillis(alarm, next) ?: return null
+    }
+    return next
 }

@@ -27,10 +27,24 @@ object LinkedAlarmManager {
     fun isSkipped(context: Context, schedulerId: Int, at: Long = System.currentTimeMillis()): Boolean =
         day(at) in skippedDays(context, schedulerId)
 
+    // Preserve the exact previous markers so a failed edit can restore them.
+    fun clearSkipsForEdit(context: Context, schedulerId: Int): String? {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val previous = prefs.getString(key(schedulerId), null)
+        check(prefs.edit().remove(key(schedulerId)).commit()) { "Could not clear skipped dates" }
+        return previous
+    }
+
+    fun restoreSkipsAfterFailedEdit(context: Context, schedulerId: Int, previous: String?) {
+        val edit = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+        if (previous == null) edit.remove(key(schedulerId)) else edit.putString(key(schedulerId), previous)
+        check(edit.commit()) { "Could not restore skipped dates" }
+    }
+
     private val groupMutex = Mutex()
 
     /** Stage new schedules before committing the group state in one Room transaction. */
-    suspend fun setEnabled(context: Context, members: List<AlarmEntity>, enabled: Boolean): Boolean =
+    suspend fun setEnabled(context: Context, members: List<AlarmEntity>, enabled: Boolean, restoreSkippedDate: Long? = null): Boolean =
         withContext(Dispatchers.IO) {
             groupMutex.withLock {
                 val app = context.applicationContext
@@ -42,9 +56,20 @@ object LinkedAlarmManager {
                 val updates = originals.map {
                     it.copy(isEnabled = enabled, scheduleGeneration = it.scheduleGeneration + 1)
                 }
+                val prefs = app.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                val previous = originals.associate { key(it.schedulerId) to prefs.getString(key(it.schedulerId), null) }
+                var markersChanged = false
                 val staged = mutableListOf<AlarmEntity>()
                 var committed = false
                 try {
+                    if (enabled && restoreSkippedDate != null) {
+                        val edit = prefs.edit()
+                        originals.forEach { alarm ->
+                            edit.putString(key(alarm.schedulerId), (skippedDays(app, alarm.schedulerId) - day(restoreSkippedDate)).joinToString(","))
+                        }
+                        markersChanged = true
+                        if (!edit.commit()) return@withLock false
+                    }
                     if (enabled) {
                         for (alarm in updates) {
                             staged.add(alarm)
@@ -68,6 +93,11 @@ object LinkedAlarmManager {
                     true
                 } finally {
                     if (!committed) {
+                        if (markersChanged) {
+                            val edit = prefs.edit()
+                            previous.forEach { (k, v) -> if (v == null) edit.remove(k) else edit.putString(k, v) }
+                            edit.commit()
+                        }
                         for (alarm in staged) {
                             AlarmScheduler.cancel(app, alarm.schedulerId, alarm.scheduleGeneration)
                         }

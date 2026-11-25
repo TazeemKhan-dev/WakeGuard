@@ -145,6 +145,28 @@ object AlarmScheduler {
     fun hasSnooze(context: Context, id: Int, generation: Long): Boolean =
         snoozePrefs(context).contains(snoozeKey(id, generation))
 
+    data class PendingSnooze(val alarmId: Int, val generation: Long, val deadline: Long, val occurrence: Long)
+
+    @Synchronized
+    fun pendingSnoozes(context: Context): List<PendingSnooze> = snoozePrefs(context).all.mapNotNull { (key, value) ->
+        val parts = key.split(':')
+        if (parts.size != 2 || value !is Long) return@mapNotNull null
+        val id = parts[0].toIntOrNull() ?: return@mapNotNull null
+        val generation = parts[1].toLongOrNull() ?: return@mapNotNull null
+        PendingSnooze(id, generation, value, snoozeOccurrence(context, id, generation))
+    }
+
+    @Synchronized
+    fun cancelSnooze(context: Context, snooze: PendingSnooze): Boolean {
+        val prefs = snoozePrefs(context)
+        val key = snoozeKey(snooze.alarmId, snooze.generation)
+        if (prefs.getLong(key, 0L) != snooze.deadline ||
+            snoozeOccurrence(context, snooze.alarmId, snooze.generation) != snooze.occurrence) return false
+        if (!prefs.edit().remove(key).remove("occ:$key").commit()) return false
+        cancelType(context, snooze.alarmId, snooze.generation, TYPE_SNOOZE)
+        return true
+    }
+
     private fun cancelType(context: Context, alarmId: Int, generation: Long, type: String) {
         val pending = PendingIntent.getBroadcast(
             context, alarmId,
