@@ -23,6 +23,19 @@ data class AlarmDefaults(
     val awakeCheckTimeoutSeconds: Int = 60
 )
 
+enum class ChallengeSoundMode { NORMAL, REDUCED, MUTED }
+
+data class ChallengeSoundSettings(
+    val mode: ChallengeSoundMode = ChallengeSoundMode.NORMAL,
+    val volumePercent: Int = 20
+) {
+    val playerVolume: Float get() = when (mode) {
+        ChallengeSoundMode.NORMAL -> 1f
+        ChallengeSoundMode.REDUCED -> volumePercent.coerceIn(10, 50) / 100f
+        ChallengeSoundMode.MUTED -> 0f
+    }
+}
+
 enum class PowerButtonAction { NONE, SNOOZE, DISMISS }
 
 data class PowerButtonSettings(
@@ -32,6 +45,20 @@ data class PowerButtonSettings(
 )
 
 class ThemePreferences(private val context: Context) {
+    private val challengeSoundModeKey = stringPreferencesKey("challenge_sound_mode")
+    private val challengeVolumeKey = intPreferencesKey("challenge_sound_volume")
+    val challengeSoundSettings: Flow<ChallengeSoundSettings> = context.wakeGuardThemeDataStore.data.map { p ->
+        ChallengeSoundSettings(
+            runCatching { ChallengeSoundMode.valueOf(p[challengeSoundModeKey] ?: "NORMAL") }.getOrDefault(ChallengeSoundMode.NORMAL),
+            (p[challengeVolumeKey] ?: 20).coerceIn(10, 50)
+        )
+    }
+    suspend fun setChallengeSoundSettings(settings: ChallengeSoundSettings) {
+        context.wakeGuardThemeDataStore.edit {
+            it[challengeSoundModeKey] = settings.mode.name
+            it[challengeVolumeKey] = settings.volumePercent.coerceIn(10, 50)
+        }
+    }
     private val ringingDurationKey = intPreferencesKey("ringing_duration_minutes")
     // Zero means no automatic timeout.
     val ringingDurationMinutes: Flow<Int> = context.wakeGuardThemeDataStore.data.map {

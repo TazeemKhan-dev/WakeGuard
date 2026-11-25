@@ -50,6 +50,7 @@ class AlarmRingingService : Service() {
         const val ACTION_NOTIFICATION_DISMISS = "wakeguard.NOTIFICATION_DISMISS"
         const val ACTION_DISMISS = "wakeguard.DISMISS"
         const val ACTION_SNOOZE = "wakeguard.SNOOZE"
+        const val ACTION_CHALLENGE_SOUND = "wakeguard.CHALLENGE_SOUND"
         const val ACTION_SCREEN_OFF_STOP = "wakeguard.SCREEN_OFF_STOP"
 
         const val CHANNEL_ID = "wakeguard_ringing_v1"
@@ -58,6 +59,27 @@ class AlarmRingingService : Service() {
         private const val RECOVERY_CHANNEL_ID = "wakeguard_recovery_v1"
 
         const val SNOOZE_MINUTES = 5
+    }
+
+    private var challengeSoundRevision = 0L
+    private fun setChallengeSound(active: Boolean) {
+        val revision = ++challengeSoundRevision
+        val token = ringToken
+        if (!active) {
+            runCatching { mediaPlayer?.setVolume(1f, 1f) }
+            return
+        }
+        CoroutineScope(Dispatchers.Main).launch {
+            val volume = try {
+                ThemePreferences(applicationContext).challengeSoundSettings.first().playerVolume
+            } catch (e: Exception) {
+                Log.e("WakeGuard", "Challenge sound preference unavailable", e)
+                1f
+            }
+            if (!destroyed && isRinging && token == ringToken && revision == challengeSoundRevision) {
+                runCatching { mediaPlayer?.setVolume(volume, volume) }
+            }
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
@@ -91,6 +113,7 @@ class AlarmRingingService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action ?: return
             if (action != Intent.ACTION_SCREEN_OFF || !isRinging || powerActionPending) return
+            setChallengeSound(false)
             val token = ringToken
             powerActionPending = true
             CoroutineScope(Dispatchers.Main).launch {
@@ -142,6 +165,14 @@ class AlarmRingingService : Service() {
                 if (isRinging && intent.getStringExtra("ring_token") == ringToken &&
                     (intent.action != ACTION_NOTIFICATION_DISMISS || currentChallengeType.equals("SWIPE", ignoreCase = true))) {
                     completeCurrent(startAwakeCheck = true)
+                }
+            }
+
+            ACTION_CHALLENGE_SOUND -> {
+                if (isRinging && intent.getStringExtra("ring_token") == ringToken &&
+                    (currentChallengeType in listOf("MATH", "SHAKE", "MEMORY") ||
+                        currentChallengeType == "QURAN_TYPING" || currentChallengeType.startsWith("QURAN_TYPING:"))) {
+                    setChallengeSound(intent.getBooleanExtra("challenge_active", false))
                 }
             }
 

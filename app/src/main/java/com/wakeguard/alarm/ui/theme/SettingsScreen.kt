@@ -3,6 +3,8 @@ package com.wakeguard.alarm.ui.settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
+import com.wakeguard.alarm.ui.theme.ChallengeSoundMode
+import com.wakeguard.alarm.ui.theme.ChallengeSoundSettings
 import com.wakeguard.alarm.ui.theme.PowerButtonAction
 import com.wakeguard.alarm.ui.theme.PowerButtonSettings
 import com.wakeguard.alarm.ui.theme.ThemePreferences
@@ -60,6 +62,16 @@ fun SettingsScreen(
     val lifecycle = com.wakeguard.alarm.domain.scheduler.OneTimeAlarmLifecycle
     val savedAutoDelete by remember { mutableStateOf(lifecycle.autoDelete(context)) }
     var autoDeleteDraft by remember { mutableStateOf(savedAutoDelete) }
+    val savedChallengeSound by preferences.challengeSoundSettings.collectAsState(initial = null)
+    var challengeDraft by remember { mutableStateOf<ChallengeSoundSettings?>(null) }
+    LaunchedEffect(savedChallengeSound) {
+        if (challengeDraft == null) challengeDraft = savedChallengeSound
+    }
+    fun saveChallengeSound(next: ChallengeSoundSettings) {
+        if (challengeDraft == next) return
+        challengeDraft = next
+        persistSetting { preferences.setChallengeSoundSettings(next) }
+    }
     val savedPower by preferences.powerButtonSettings.collectAsState(initial = null)
     val savedDuration by preferences.ringingDurationMinutes.collectAsState(initial = null)
     var unlimited by remember { mutableStateOf((savedDuration ?: 0) == 0) }
@@ -134,6 +146,23 @@ fun SettingsScreen(
             }
 
         }
+        }
+        Spacer(Modifier.height(12.dp))
+        SettingsAccordion("Challenge Sound") {
+            Text("Applies after starting a dismissal challenge. Swipe is unaffected.", color = W.secondary, fontSize = 13.sp)
+            challengeDraft?.let { sound ->
+                listOf(ChallengeSoundMode.NORMAL to "Keep ringing", ChallengeSoundMode.REDUCED to "Reduce volume", ChallengeSoundMode.MUTED to "Mute ringtone").forEach { (option, label) ->
+                    Row(Modifier.fillMaxWidth().clickable { saveChallengeSound(sound.copy(mode = option)) }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = sound.mode == option, onClick = { saveChallengeSound(sound.copy(mode = option)) })
+                        Text(label, color = W.text)
+                    }
+                }
+                if (sound.mode == ChallengeSoundMode.REDUCED) {
+                    NumberWheelRow("Challenge volume", "%", 10..50, sound.volumePercent) {
+                        saveChallengeSound(sound.copy(volumePercent = it))
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
         SettingsAccordion("Ringing Behaviour") {
