@@ -47,6 +47,7 @@ class AwakeCheckReceiver : BroadcastReceiver() {
                         if (System.currentTimeMillis() >= check.deadlineAt) return@launch
                         if (!A.cancelMatching(app, id, token)) return@launch
                         LinkedAlarmManager.confirm(app, alarm, check.occurrence)
+                        com.wakeguard.alarm.domain.scheduler.OneTimeAlarmLifecycle.finish(app, id, check.generation)
                     }
                     A.ACTION_PROMPT -> {
                         if (System.currentTimeMillis() >= check.deadlineAt) return@launch

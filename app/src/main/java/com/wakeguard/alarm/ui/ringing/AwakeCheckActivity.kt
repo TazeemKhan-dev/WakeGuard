@@ -11,8 +11,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.wakeguard.alarm.awake.AwakeCheckManager as A
-import com.wakeguard.alarm.ui.theme.ThemeMode
-import com.wakeguard.alarm.ui.theme.WakeGuardTheme
+import com.wakeguard.alarm.ui.theme.alarmScreenIsDark
+import com.wakeguard.alarm.ui.theme.AlarmPalette
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.delay
 
 class AwakeCheckActivity : ComponentActivity() {
@@ -21,7 +25,16 @@ class AwakeCheckActivity : ComponentActivity() {
         val id = intent.getIntExtra("alarm_id", 0)
         val token = intent.getStringExtra(A.EXTRA_TOKEN) ?: ""
         setContent {
-            WakeGuardTheme(ThemeMode.SYSTEM) {
+            val dark = alarmScreenIsDark()
+            val view = LocalView.current
+            val background = if (dark) AlarmPalette.backgroundDark else AlarmPalette.backgroundLight
+            SideEffect {
+                WindowInsetsControllerCompat(window, view).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
                 var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
                 LaunchedEffect(id, token) {
                     while (true) { now = System.currentTimeMillis(); delay(250) }
@@ -31,14 +44,14 @@ class AwakeCheckActivity : ComponentActivity() {
                     LaunchedEffect(check, now >= (check?.deadlineAt ?: 0L)) { finish() }
                 } else {
                     val seconds = ((check.deadlineAt - now + 999) / 1000).coerceAtLeast(0)
-                    Column(Modifier.fillMaxSize().padding(24.dp),
+                    Column(Modifier.fillMaxSize().background(background).systemBarsPadding().padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center) {
-                        Text("Are you still awake?", style = MaterialTheme.typography.headlineMedium)
+                        Text("Are you still awake?", color = AlarmPalette.text(dark), style = MaterialTheme.typography.headlineMedium)
                         Spacer(Modifier.height(20.dp))
-                        Text("${seconds / 60}:%02d".format(seconds % 60), style = MaterialTheme.typography.displayLarge)
+                        Text("${seconds / 60}:%02d".format(seconds % 60), color = AlarmPalette.text(dark), style = MaterialTheme.typography.displayLarge)
                         Spacer(Modifier.height(24.dp))
-                        Button(onClick = {
+                        Button(colors = ButtonDefaults.buttonColors(containerColor = AlarmPalette.accent(dark), contentColor = if (dark) Color(0xFF101018) else Color.White), onClick = {
                             sendBroadcast(Intent(this@AwakeCheckActivity, com.wakeguard.alarm.receiver.AwakeCheckReceiver::class.java).apply {
                                 action = A.ACTION_CONFIRM
                                 putExtra("alarm_id", id)

@@ -1,5 +1,6 @@
 package com.wakeguard.alarm.service
 
+import com.wakeguard.alarm.domain.scheduler.OneTimeAlarmLifecycle
 import android.R
 import com.wakeguard.alarm.linked.LinkedAlarmManager
 import java.util.UUID
@@ -119,7 +120,7 @@ class AlarmRingingService : Service() {
 
     private val timeoutRunnable = Runnable {
         Log.d("WakeGuard", "Alarm timeout reached")
-        stopRinging()
+        completeCurrent(startAwakeCheck = false)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -140,41 +141,7 @@ class AlarmRingingService : Service() {
             ACTION_DISMISS, ACTION_NOTIFICATION_DISMISS -> {
                 if (isRinging && intent.getStringExtra("ring_token") == ringToken &&
                     (intent.action != ACTION_NOTIFICATION_DISMISS || currentChallengeType.equals("SWIPE", ignoreCase = true))) {
-                    val dismissedId = currentAlarmId
-                    val dismissedGeneration = currentGeneration
-                    val dismissedOccurrence = currentOccurrence
-                    // Persist the one-shot completion independently of this Service's lifetime.
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val dao = WakeGuardDatabase.getInstance(applicationContext).alarmDao()
-                            val alarm = dao.getAllAlarms().firstOrNull {
-                                it.schedulerId == dismissedId
-                            }
-                            if (alarm != null && alarm.isEnabled &&
-                                alarm.scheduleGeneration == dismissedGeneration &&
-                                alarm.repeatDays.isBlank()
-                            ) {
-                                dao.updateAlarm(alarm.copy(isEnabled = false))
-                            }
-                        } catch (e: Exception) {
-                            Log.e("WakeGuard", "Could not disable completed one-time alarm", e)
-                        }
-                    }
-                    // Only the challenge completion enters this branch.
-                    // Every completed challenge starts a new Awake Check, including re-rings.
-                    CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                val alarm = WakeGuardDatabase.getInstance(applicationContext).alarmDao()
-                                    .getAllAlarms().firstOrNull { it.schedulerId == dismissedId }
-                                if (alarm != null && alarm.awakeCheckEnabled &&
-                                    alarm.scheduleGeneration == dismissedGeneration) {
-                                    AwakeCheckManager.start(applicationContext, dismissedId,
-                                        dismissedGeneration, alarm.awakeCheckDelayMinutes,
-                                        alarm.awakeCheckTimeoutSeconds, dismissedOccurrence)
-                                }
-                            } catch (e: Exception) { Log.e("WakeGuard", "Awake Check scheduling failed", e) }
-                    }
-                    stopRinging()
+                    completeCurrent(startAwakeCheck = true)
                 }
             }
 
@@ -203,6 +170,36 @@ class AlarmRingingService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun completeCurrent(startAwakeCheck: Boolean) {
+        if (!isRinging) return
+        val id = currentAlarmId
+        val generation = currentGeneration
+        val occurrence = currentOccurrence
+        val app = applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val alarm = WakeGuardDatabase.getInstance(app).alarmDao().getAllAlarms()
+                    .firstOrNull { it.schedulerId == id && it.scheduleGeneration == generation }
+                    ?: return@launch
+                if (startAwakeCheck && alarm.awakeCheckEnabled) {
+                    val scheduled = AwakeCheckManager.start(app, id, generation,
+                        alarm.awakeCheckDelayMinutes, alarm.awakeCheckTimeoutSeconds, occurrence)
+                    if (!scheduled) {
+                        Log.e("WakeGuard", "Awake Check scheduling failed; retaining alarm")
+                        if (alarm.repeatDays.isBlank()) {
+                            val dao = WakeGuardDatabase.getInstance(app).alarmDao()
+                            val current = dao.getAllAlarms().firstOrNull { it.id == alarm.id && it.scheduleGeneration == generation }
+                            if (current != null && current.isEnabled) dao.updateAlarm(current.copy(isEnabled = false))
+                        }
+                        return@launch
+                    }
+                }
+                OneTimeAlarmLifecycle.finish(app, id, generation)
+            } catch (e: Exception) { Log.e("WakeGuard", "Alarm completion failed", e) }
+        }
+        stopRinging()
     }
 
     private fun snoozeCurrent(minutes: Int) {
@@ -435,8 +432,12 @@ class AlarmRingingService : Service() {
             .setSmallIcon(
                 R.drawable.ic_lock_idle_alarm
             )
-            .setContentTitle("WakeGuard Alarm")
-            .setContentText(currentLabel)
+            .setContentTitle(currentLabel.takeUnless { it.isBlank() || it == "New Alarm" } ?: "Alarm ringing")
+            .setContentText("Ringing now · " + if (currentChallengeType.equals("SWIPE", true)) "Swipe to dismiss" else "Complete your challenge")
+            .setSubText("Alarm ringing")
+            .setWhen(currentOccurrence)
+            .setShowWhen(true)
+            .setOnlyAlertOnce(true)
             .setCategory(
                 NotificationCompat.CATEGORY_ALARM
             )
@@ -455,12 +456,13 @@ class AlarmRingingService : Service() {
             )
             .addAction(
                 R.drawable.ic_lock_idle_alarm,
-                "Snooze",
+                "Snooze · $currentSnoozeMinutes min",
                 snoozePendingIntent
             )
         if (currentChallengeType.equals("SWIPE", ignoreCase = true)) {
             builder.addAction(R.drawable.ic_lock_idle_alarm, "Dismiss", dismissPendingIntent)
         }
+        else { builder.addAction(R.drawable.ic_lock_idle_alarm, "Open challenge", fullScreenPendingIntent) }
         return builder.build()
     }
 

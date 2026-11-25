@@ -71,6 +71,7 @@ object UpcomingAlertsManager {
                     ?: return@withContext false
                 if (!A.cancelMatching(context, c.alarmId, c.token)) return@withContext false
                 LinkedAlarmManager.confirm(context, alarm, c.occurrence)
+                com.wakeguard.alarm.domain.scheduler.OneTimeAlarmLifecycle.finish(context, c.alarmId, c.generation)
                 true
             }
         }

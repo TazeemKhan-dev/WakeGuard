@@ -87,6 +87,7 @@ object AlarmScheduler {
                 AlarmManager.RTC_WAKEUP, occurrence,
                 pendingIntent(context, alarmId, generation, TYPE_NORMAL, label, occurrence)
             )
+            UpcomingAlarmReminder.record(context, alarmId, generation, label, occurrence)
             true
         } catch (_: SecurityException) { false }
     }
@@ -196,6 +197,7 @@ object AlarmScheduler {
         snoozePrefs(context).edit().remove(snoozeKey(alarmId, generation)).remove("occ:${snoozeKey(alarmId, generation)}").commit()
         cancelType(context, alarmId, generation, TYPE_NORMAL)
         cancelType(context, alarmId, generation, TYPE_SNOOZE)
+        UpcomingAlarmReminder.cancel(context, alarmId, generation)
         cancelLegacy(context, alarmId)
     }
 

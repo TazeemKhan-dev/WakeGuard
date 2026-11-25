@@ -17,6 +17,7 @@ import kotlinx.coroutines.withTimeout
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (com.wakeguard.alarm.domain.scheduler.UpcomingAlarmReminder.handle(this, context, intent)) return
         val alarmId = intent.getIntExtra(AlarmScheduler.EXTRA_ALARM_ID, 0)
         if (alarmId == 0) return
         val generation = intent.getLongExtra(AlarmScheduler.EXTRA_GENERATION, 1L)
@@ -48,6 +49,9 @@ class AlarmReceiver : BroadcastReceiver() {
                     if (alarm.scheduleGeneration != generation) {
                         Log.w("WakeGuard", "Rejected stale alarm $alarmId generation $generation")
                         return@withTimeout
+                    }
+                    if (type == AlarmScheduler.TYPE_NORMAL) {
+                        com.wakeguard.alarm.domain.scheduler.UpcomingAlarmReminder.consume(appContext, alarmId, generation, occurrence)
                     }
                     // Re-arm recurring alarms before ringing. One-time alarms remain one-shot.
                     // A generation-aware PendingIntent ensures the next occurrence is distinct.
