@@ -20,6 +20,11 @@ fun ChallengeRouter(
     onExitPreview: () -> Unit
 ) {
     val displayLabel = label.trim().takeUnless { it == "New Alarm" || it == "Preview alarm" || it == "Alarm" }.orEmpty()
+    if (QuranTypingConfig.isTyping(challengeType)) {
+        QuranTypingScreen(displayLabel, snoozeMinutes, QuranTypingConfig.parse(challengeType),
+            previewMode, onDismiss, onSnooze, onExitPreview)
+        return
+    }
     when (challengeType) {
         "MATH" -> MathChallengeScreen(displayLabel, snoozeMinutes, mathDifficulty,
             mathQuestionCount, previewMode, onDismiss, onSnooze, onExitPreview)

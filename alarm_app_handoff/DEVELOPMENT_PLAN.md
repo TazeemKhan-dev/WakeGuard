@@ -1,77 +1,39 @@
 # WakeGuard — Development Plan
-Updated: 2026-11-21
 
-## Delivery approach
-Android-only, offline-first, AI-assisted. Preserve a working vertical slice, build and test on physical realme phone, then commit verified milestones. Avoid speculative AGP/Kotlin/Gradle changes. Source implementation and device verification are separate statuses.
+## Current checkpoint — 2026-11-25
+Source baseline: app(20261125-023822).zip plus subsequent individual replacements. The current local Android Studio tree has not been re-exported. User screenshots demonstrate Quran Typing running; user approved the latest punctuation highlighting. Full current build output, regression results and Git hash/push remain unconfirmed.
 
-## Milestone 0 — Setup [IMPLEMENTED]
-- [x] Kotlin + Jetpack Compose Android project, physical phone development, Git workflow.
-- [ ] Confirm latest branch/commit and successful remote push.
+- Core: Room persistence, generation-aware AlarmManager scheduling, create/edit/delete/toggle, Once/Weekdays/Weekends/Daily/Custom, reboot recovery, full-screen foreground ringing, snooze and optional labels. Earlier core tests passed; overlap previously failed and needs retest.
+- Awake Check: configurable delay and response timeout, explicit I'm Awake, re-ring on ignore; distinct from snooze. Earlier device tests passed.
+- Linked Alarm Groups: multi-select linking, group enable/disable, skip today/tomorrow, explicit awake confirmation skips remaining current-session alarms only. Earlier group tests passed; snooze or challenge completion alone must not skip remaining alarms.
+- Memory: configurable grid, highlights, memorize time and rounds; wrong answer retries with a new pattern. Five dismissal methods now implemented: Swipe, Math, Shake, Memory, Quran Typing.
+- Alarm editor: infinite hour/minute wheels, inline number pickers, global defaults for new alarms (individual overrides retained). Defaults include snooze and Awake Check.
+- Upcoming Alerts: pending snoozes and Awake Checks, countdowns, individual cancellation/confirmation and clear-all confirmation. One-time snooze cancellation should disable the alarm; recurring schedules must remain intact. Retest latest patches.
+- Skip UI: temporarily skipped alarms appear OFF, manual ON clears skip, editing clears skip and re-enables/reschedules even if time unchanged. Custom skip dialog polish delivered; retest.
+- Power controls: Do nothing (default), Snooze (alarm duration or custom), Dismiss (Swipe only). Screen-off/on observed during real ringing on realme; not a physical key API. Double press dropped because camera shortcut interferes. Power-button I'm Awake confirmation for Swipe remains pending.
+- Ringing duration: global Unlimited default or custom minutes, replacing old fixed 15-minute timeout. Long-duration reliability and custom timeout lifecycle unverified. Swipe redesign delivered with draggable handle, animation and live clock.
+- Settings: independent accordions, Save buttons only for unsaved changes, disappear on save/revert; appearance auto-saves. DataStore persists preferences.
+- Quran Typing: Arabic passage, English meaning and reference; English-only input; Short/Medium/Mixed and 1–5 reminders. 22 curated passages (including consecutive verses), offline; no isolated context-dependent fragments intended. Inline feedback, optional punctuation/case, correct punctuation highlights. User approved latest UI/feedback; full content proofreading and regression pending. No new challenges planned.
+- Ringtones: Loud/Medium/Low and custom picker; custom preview and light status bar previously confirmed. Bundled music quality remains open; vibration previously failed and deferred.
 
-## Milestone 1 — Core alarms [IMPLEMENTED IN SOURCE; RETEST]
-- [x] Home list, add/edit, enable/disable, delete, next-alarm summary.
-- [x] AlarmManager scheduling, full-screen ringing, foreground service.
-- [x] Snooze/dismiss, vibration, ringing timeout in source.
-- [ ] Verify current build and real alarm on locked device, including snooze and timeout.
+## Milestone ledger
+| Milestone | Status |
+|---|---|
+| 0–5 Setup, core, Room, repeats, challenges, appearance/audio | Implemented; retest |
+| 6 Reliability | Ongoing; overlap and vibration open |
+| 7 Awake Check | Implemented; earlier tests passed |
+| 8.3–8.4 Linked groups | Implemented; earlier tests passed |
+| 8.5 Memory | Implemented |
+| 8.6 Alarm defaults and editor polish | Delivered |
+| 8.7 Upcoming Alerts and skip/edit fixes | Delivered; regression pending |
+| 8.8 Power controls, ringing duration, Swipe and settings polish | Delivered in part; awake confirmation pending |
+| 8.9 Quran Typing | Implemented; latest feedback approved; regression/content review pending |
+| 9 Stability and release polish | Next |
 
-## Milestone 2 — Room persistence [IMPLEMENTED IN SOURCE; RETEST]
-- [x] Room alarm entity, DAO, database, repository integrated with MainActivity.
-- [x] Persistence operations for create/update/delete/toggle.
-- [x] Generation-aware rescheduling/cancellation logic in source.
-- [ ] Confirm persistence across app restart, no duplicate triggers, and migration behavior.
-
-## Milestone 3 — Repeat scheduling [IMPLEMENTED IN SOURCE; RELIABILITY PENDING]
-- [x] Once, weekdays, weekends, daily, custom day selection.
-- [x] Repeat scheduling/re-arm logic in shared source.
-- [ ] Test day rollover, timezone changes, reboot, permission revocation and stale PendingIntents.
-
-## Milestone 4 — Dismissal challenges and appearance [IMPLEMENTED IN SOURCE; RETEST]
-- [x] Swipe, Math (difficulty/question count), Shake (movement target).
-- [x] Preview mode for dismissal methods.
-- [x] Studio White / Midnight Black / System app appearance via DataStore.
-- [x] Independent alarm-screen theme (Dark / Light / Follow app).
-- [x] Nested Back navigation for dismissal settings and snooze; preview Activity returns on finish.
-- [x] Swipe chevron animation (no mouse icon), Shake phone/progress polish.
-- [x] Optional label display; remove `Preview:` and default placeholders.
-- [ ] Test all challenge paths and preview Back, theme persistence, UI animations, and blank/named labels on device.
-
-## Milestone 5 — Ringtones and theme fixes [IMPLEMENTED IN CURRENT USER BUILD; AUDIO QUALITY OPEN]
-- [x] Per-alarm ringtone key persisted using existing `soundUri`; selection and playback plumbing added in source.
-- [x] Ringtone picker organized as Loud / Medium / Low expandable groups; separate custom audio file picker; no device ringtone category.
-- [x] Custom audio picker now shows selected file and supports preview; user confirmed working on 2026-11-21.
-- [x] App Light Mode status bar contrast fix applied; user confirmed working on 2026-11-21.
-- [x] Edited alarms auto-enable/reschedule on save in the latest inspected `MainActivity.kt` source.
-- [ ] Replace disliked bundled ringtone audio with genuinely good, lyric-free instrumental music; avoid reusing old bee-like/single-note audio. Approve previews first, verify licenses for third-party audio.
-- [ ] Verify selected custom ringtone survives app restart and rings reliably, including URI access.
-
-## Milestone 6 — Alarm reliability regression [NEXT; NOT YET FULLY VERIFIED]
-- [ ] Confirm current Git status, branch/commit, clean `:app:assembleDebug` and phone smoke test.
-- [ ] Test edited OFF alarm -> new upcoming time -> ON -> rings, and one-time alarm disables after dismissal without app restart.
-- [ ] Test real alarm vs preview, snooze, timeout, repeat, locked screen, reboot, timezone/time changes, permission changes, Doze, process recreation, overlapping alarms.
-- [ ] Test Swipe / Math / Shake and screen-off dismissal approximation. Screen-off is NOT a guaranteed power-button-only event.
-- [ ] Revisit vibration (previously reported not working; intentionally deferred).
-- [ ] Commit/push verified checkpoint; record branch/hash in `PROGRESS.txt`.
-
-## Milestone 7 — Awake Check [NEXT FEATURE AFTER REGRESSION; NOT IMPLEMENTED]
-- [ ] After successful challenge dismissal, schedule a configurable wait (X minutes), then prompt "Are you still awake?".
-- [ ] Provide explicit "I'm Awake" confirmation and configurable response timeout; no response triggers a new ringing occurrence.
-- [ ] Keep Awake Check distinct from snooze, persist state, and schedule using Android mechanisms independent of the UI/process.
-- [ ] Define repeat/retry policy and safe handling of reboot, permission changes, stale events and overlapping alarms.
-- [ ] Validate with real locked-device tests before treating it as reliable.
-
-## Milestone 8 — Linked Alarm Groups [PLANNED; NOT IMPLEMENTED]
-- [ ] Create/edit groups and associate alarms.
-- [ ] Define per-group local wake-date/session key and occurrence lifecycle.
-- [ ] Explicit awake confirmation cancels later pending alarms for this session only, preserving unrelated alarms and future repeats.
-- [ ] Handle snoozes, races, reboot and time changes.
-
-## Milestone 9 — Final polish and release [PENDING]
-- [ ] Volume/vibration options, accessibility, battery/permission onboarding, release signing and APK testing.
-
-## Next coding session
-1. Ask for latest source ZIP or targeted current files when needed; do not assume prior patches are still the working files.
-2. Run `git status --short`, `git log -1 --oneline`, and `.\gradlew.bat :app:assembleDebug` on Windows.
-3. Run a focused alarm reliability regression; fix confirmed bugs only.
-4. Commit/push a verified checkpoint and record its hash.
-5. Implement Awake Check in small testable steps, starting with its data model and scheduling design.
-6. Provide individual updated `.kt` files with exact paths; ZIP only for collections of audio assets or when requested.
+## Next work (priority order)
+1. Inspect fresh source/actual installed replacements and run Windows `git status --short`, `git log -1 --oneline`, `.\gradlew.bat :app:assembleDebug`.
+2. Fix one-time alarm state/countdown: observed Ring Once still ON after unattended ringing stopped, home displayed tomorrow despite no verified future occurrence. Distinguish active, snoozed, awaiting check, completed and scheduled; do not invent tomorrow for consumed Once. Preserve recurring and linked sessions.
+3. Implement optional single power-button I'm Awake confirmation for Swipe only; validate active check token and use normal confirmation path. Do not bypass other challenges; no double-press feature.
+4. Verify Unlimited beyond old 15-minute limit and longer supervised tests, custom timeout, screen-off/background, battery restrictions, process death, reboot, overlapping alarms, stale events and permissions. Android cannot guarantee indefinite ringing; ensure timeout does not falsely confirm awake or skip linked alarms.
+5. Regression: all five challenges, previews, snooze, Awake Check, linked groups, upcoming cancellation, skip/edit, settings persistence, themes, ringtone and vibration. Verify Quran content against reliable references before release.
+6. Commit/push verified checkpoint and record actual branch/hash; no speculative Gradle/dependency changes. Later: approved musical ringtone collection, accessibility, onboarding and release polish.

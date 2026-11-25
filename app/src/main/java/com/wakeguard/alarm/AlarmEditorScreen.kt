@@ -1,6 +1,7 @@
 package com.wakeguard.alarm
 
 import android.content.Intent
+import com.wakeguard.alarm.ui.ringing.challenges.QuranTypingConfig
 import com.wakeguard.alarm.ringtone.RingtoneScreen
 import com.wakeguard.alarm.ringtone.ringtoneDisplayName
 import androidx.activity.compose.BackHandler
@@ -44,7 +45,7 @@ private val weekdays = setOf(2, 3, 4, 5, 6)
 private val weekends = setOf(1, 7)
 
 @Composable
-private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, modifier: Modifier = Modifier, infinite: Boolean = false, rowHeight: Int = 56) {
+private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, modifier: Modifier = Modifier, infinite: Boolean = false, rowHeight: Int = 56, itemContent: (@Composable (String, Boolean) -> Unit)? = null) {
     val count = if (infinite) Int.MAX_VALUE else values.size
     val start = if (infinite) (count / 2 / values.size) * values.size + initial else initial.coerceIn(0, values.lastIndex)
     val state = rememberLazyListState(initialFirstVisibleItemIndex = start)
@@ -82,7 +83,7 @@ private fun Wheel(values: List<String>, initial: Int, onValue: (Int) -> Unit, mo
                 }
             }
             Box(Modifier.fillMaxWidth().height(rowHeight.dp), contentAlignment = Alignment.Center) {
-                Text(value, color = if (selected) W.text else W.secondary,
+                if (itemContent != null) itemContent(value, selected) else Text(value, color = if (selected) W.text else W.secondary,
                     fontSize = if (selected) 27.sp else 18.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             }
@@ -120,7 +121,9 @@ fun AlarmEditorScreen(
     var ringtoneScreen by remember { mutableStateOf(false) }
     var vibration by remember(existing?.id) { mutableStateOf(existing?.vibrationEnabled ?: true) }
     var snoozeMinutes by remember(existing?.id) { mutableIntStateOf(existing?.snoozeMinutes ?: alarmDefaults.snoozeMinutes) }
-    var challenge by remember(existing?.id) { mutableStateOf(existing?.challengeType ?: "SWIPE") }
+    var challenge by remember(existing?.id) { mutableStateOf(existing?.challengeType?.let { if (QuranTypingConfig.isTyping(it)) "QURAN_TYPING" else it } ?: "SWIPE") }
+    var typingConfig by remember(existing?.id) { mutableStateOf(QuranTypingConfig.parse(existing?.challengeType.orEmpty())) }
+    val storedChallenge = if (challenge == "QURAN_TYPING") typingConfig.encode() else challenge
     var difficulty by remember(existing?.id) { mutableStateOf(existing?.mathDifficulty ?: "EASY") }
     var questionCount by remember(existing?.id) { mutableIntStateOf(existing?.mathQuestionCount ?: 3) }
     var shakeCount by remember(existing?.id) { mutableIntStateOf(existing?.shakeCount ?: 10) }
@@ -187,6 +190,8 @@ fun AlarmEditorScreen(
         ChallengeSettingsScreen(
             challenge = challenge,
             onChallengeChange = { challenge = it },
+            typingConfig = typingConfig,
+            onTypingConfigChange = { typingConfig = it },
             difficulty = difficulty,
             onDifficultyChange = { difficulty = it },
             questionCount = questionCount,
@@ -209,7 +214,7 @@ fun AlarmEditorScreen(
                     putExtra("preview_mode", true)
                     putExtra("alarm_label", label.trim())
                     putExtra("snooze_minutes", snoozeMinutes)
-                    putExtra("challenge_type", challenge)
+                    putExtra("challenge_type", storedChallenge)
                     putExtra("math_difficulty", difficulty)
                     putExtra("math_question_count", questionCount)
                     putExtra("shake_count", shakeCount)
@@ -233,7 +238,7 @@ fun AlarmEditorScreen(
             TextButton(enabled = (!awakeCheckEnabled || (awakeCheckDelay != null && awakeCheckTimeout != null)) && (!linkedSelection || selectedIds.isNotEmpty()), onClick = {
                 onSave(hour, minute, label.ifBlank { "New Alarm" },
                     selectedDays.sorted().joinToString(","), vibration, snoozeMinutes,
-                    challenge, difficulty, questionCount, shakeCount, memoryDifficulty, memoryRounds, memoryDurationSeconds, soundUri,
+                    storedChallenge, difficulty, questionCount, shakeCount, memoryDifficulty, memoryRounds, memoryDurationSeconds, soundUri,
                     awakeCheckEnabled, awakeCheckDelay ?: 2, awakeCheckTimeout ?: 60, if (linkedSelection) selectedIds else emptySet())
             }) { Text("Done", color = blue) }
         }
@@ -302,6 +307,7 @@ fun AlarmEditorScreen(
                     Text(when (challenge) {
                         "MATH" -> "Math · ${difficulty.lowercase()} · $questionCount questions"
                         "SHAKE" -> "Shake · $shakeCount movements"
+                        "QURAN_TYPING" -> "Quran Typing · ${typingConfig.length.lowercase()} · ${typingConfig.rounds} ayahs"
                         "MEMORY" -> "Memory · ${memoryDifficulty.lowercase()} · $memoryRounds rounds · ${memoryDurationSeconds}s"
                         else -> "Swipe up"
                     }, color = muted, fontSize = 12.sp)
@@ -421,6 +427,7 @@ fun AlarmEditorScreen(
 @Composable
 private fun ChallengeSettingsScreen(
     challenge: String, onChallengeChange: (String) -> Unit,
+    typingConfig: QuranTypingConfig, onTypingConfigChange: (QuranTypingConfig) -> Unit,
     difficulty: String, onDifficultyChange: (String) -> Unit,
     questionCount: Int, onQuestionCountChange: (Int) -> Unit,
     shakeCount: Int, onShakeCountChange: (Int) -> Unit,
@@ -442,27 +449,34 @@ private fun ChallengeSettingsScreen(
         Text("How would you like to stop your alarm?", color = W.text, fontSize = 17.sp)
         Text("Try a preview before saving your alarm.", color = muted, fontSize = 13.sp)
         Spacer(Modifier.height(20.dp))
-        listOf(
-            Triple("SWIPE", "↑", "Swipe up to dismiss"),
-            Triple("MATH", "▦", "Answer arithmetic questions"),
-            Triple("SHAKE", "▯", "Move your phone to complete"),
-            Triple("MEMORY", "▦", "Memorize and recall highlighted blocks")
-        ).forEach { (method, symbol, description) ->
-            val active = challenge == method
-            Row(Modifier.fillMaxWidth().padding(bottom = 10.dp)
-                .background(if (active) W.selected else panel, RoundedCornerShape(17.dp))
-                .clickable { onChallengeChange(method) }.padding(18.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Text(symbol, fontSize = 30.sp, color = if (active) blue else W.secondary)
-                Spacer(Modifier.width(17.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(method.lowercase().replaceFirstChar { it.uppercase() }, color = W.text,
-                        fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    Text(description, color = muted, fontSize = 12.sp)
+        val methods = remember { listOf("SWIPE", "MATH", "SHAKE", "MEMORY", "QURAN_TYPING") }
+        val names = remember { listOf("Swipe", "Math", "Shake", "Memory", "Quran Typing") }
+        val descriptions = remember { listOf(
+            "Swipe up to dismiss", "Answer arithmetic questions", "Move your phone to complete",
+            "Memorize and recall highlighted blocks", "Type the English meaning of Quranic ayahs"
+        ) }
+        val selectedIndex = methods.indexOf(challenge).coerceAtLeast(0)
+        Text("Scroll to choose your challenge", color = muted, fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth().background(panel, RoundedCornerShape(18.dp))) {
+            Wheel(names, selectedIndex, { onChallengeChange(methods[it]) },
+                Modifier.fillMaxWidth(), infinite = true, rowHeight = 52) { name, selected ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp)
+                        .fillMaxHeight().background(if (selected) W.selected else Color.Transparent, RoundedCornerShape(12.dp)),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(name, color = if (selected) purple else muted,
+                        fontSize = if (selected) 21.sp else 16.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
                 }
-                if (active) Text("✓", color = W.primary, fontSize = 23.sp)
             }
         }
+        Spacer(Modifier.height(10.dp))
+        Text(descriptions[selectedIndex], color = muted, fontSize = 13.sp,
+            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(18.dp))
         if (challenge == "MATH") {
             Spacer(Modifier.height(8.dp))
             Text("Difficulty", color = W.text, fontWeight = FontWeight.SemiBold)
@@ -500,6 +514,19 @@ private fun ChallengeSettingsScreen(
             NumberWheelRow("Rounds", "rounds", 1..10, memoryRounds, onMemoryRoundsChange)
             key(memoryDifficulty) {
                 NumberWheelRow("Memorization duration", "seconds", 5..10, memoryDurationSeconds, onMemoryDurationChange)
+            }
+        }
+        if (challenge == "QURAN_TYPING") {
+            Text("Ayah length", color = W.text, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("SHORT", "MEDIUM", "MIXED").forEach { length ->
+                    FilterChip(selected = typingConfig.length == length,
+                        onClick = { onTypingConfigChange(typingConfig.copy(length = length)) },
+                        label = { Text(length.lowercase().replaceFirstChar { it.uppercase() }) })
+                }
+            }
+            NumberWheelRow("Ayahs required", "ayahs", 1..5, typingConfig.rounds) {
+                onTypingConfigChange(typingConfig.copy(rounds = it))
             }
         }
         Spacer(Modifier.height(24.dp))

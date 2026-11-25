@@ -1,76 +1,98 @@
 # WakeGuard — Architecture and Current File Tree
-Updated: 2026-11-21
 
-## Architecture at current checkpoint
-Single Android app, Kotlin + Jetpack Compose + Material 3. Room stores alarm definitions; the UI uses `AlarmRepository`; `AlarmScheduler` schedules Android AlarmManager PendingIntents. Receiver validates alarm identity/generation and starts ringing service/full-screen Activity. The foreground service manages ringtone/vibration and snooze/dismiss lifecycle. Compose renders ringing screens and dismissal challenges. DataStore persists independent app and alarm-screen theme selections.
+Updated: 2026-11-25
 
-## Known source layout (based on shared files, not a complete filesystem listing)
+## Source layout
+Derived from latest supplied ZIP plus three new Quran files. Physical paths, not package declarations; AwakeCheckManager.kt is physically at root but declares `com.wakeguard.alarm.awake`; SettingsScreen.kt is physically under ui/theme. Not a fresh local filesystem export.
+
 ```text
 app/src/main/java/com/wakeguard/alarm/
-├── MainActivity.kt
 ├── AlarmEditorScreen.kt
+├── AwakeCheckManager.kt
+├── MainActivity.kt
 ├── data/
 │   ├── local/
+│   │   ├── AlarmDao.java
 │   │   ├── AlarmEntity.kt
-│   │   ├── AlarmDao.kt
-│   │   └── WakeGuardDatabase.kt
-│   └── repository/AlarmRepository.kt
-├── domain/scheduler/AlarmScheduler.kt
-├── receiver/AlarmReceiver.kt
-├── service/AlarmRingingService.kt
-└── ui/
-    ├── settings/SettingsScreen.kt
-    ├── theme/
-    │   ├── ThemePreferences.kt
-    │   ├── WakeGuardTheme.kt
-    │   └── AlarmAppearance.kt     # recent supplied addition; verify installed
-    └── ringing/
-        ├── AlarmRingActivity.kt
-        ├── AlarmRingScreen.kt
-        └── challenges/
-            ├── ChallengeRouter.kt
-            ├── ChallengeLayout.kt
-            ├── MathChallengeScreen.kt
-            └── ShakeChallengeScreen.kt
+│   │   └── WakeGuardDatabase.java
+│   └── repository/
+│       └── AlarmRepository.kt
+├── domain/
+│   └── scheduler/
+│       └── AlarmScheduler.kt
+├── linked/
+│   └── LinkedAlarmManager.kt
+├── receiver/
+│   ├── AlarmBootReceiver.kt
+│   ├── AlarmReceiver.kt
+│   ├── AwakeCheckReceiver.kt
+│   └── DismissReceiver.kt
+├── ringtone/
+│   ├── RingtoneScreen.kt
+│   └── WakeGuardSounds.kt
+├── service/
+│   ├── AlarmRingingService.kt
+│   └── RingingSessionStore.kt
+├── ui/
+│   ├── ringing/
+│   │   ├── AlarmRingActivity.kt
+│   │   ├── AlarmRingScreen.kt
+│   │   ├── AwakeCheckActivity.kt
+│   │   ├── SwipeUpControl.kt
+│   │   └── challenges/
+│   │       ├── ChallengeLayout.kt
+│   │       ├── ChallengeRouter.kt
+│   │       ├── MathChallengeScreen.kt
+│   │       ├── MemoryChallengeScreen.kt
+│   │       ├── MemoryChallengeState.kt
+│   │       ├── QuranAyahs.kt
+│   │       ├── QuranTypingConfig.kt
+│   │       ├── QuranTypingScreen.kt
+│   │       └── ShakeChallengeScreen.kt
+│   └── theme/
+│       ├── AlarmAppearance.kt
+│       ├── Color.kt
+│       ├── SettingsScreen.kt
+│       ├── Theme.kt
+│       ├── ThemePreferences.kt
+│       ├── Type.kt
+│       └── WakeGuardTheme.kt
+└── upcoming/
+    ├── UpcomingAlertsManager.kt
+    └── UpcomingAlertsScreen.kt
 ```
-Other receivers (e.g. reboot/dismiss) and resources may exist; inspect project before treating this as exhaustive. Past duplicate root-level classes caused compilation errors; check if duplicates remain.
 
-## Current alarm data model
-Observed `AlarmEntity` fields from shared code include: database `id`, unique `schedulerId`, hour/minute, label, enabled, repeatDays, optional `groupId`, snoozeMinutes, vibrationEnabled, soundUri, `scheduleGeneration`, challengeType, mathDifficulty, mathQuestionCount, shakeCount. Database migrations were added during development; verify exact current schema/version from actual source before changing.
+## Components and flows
+- MainActivity/AlarmEditorScreen -> AlarmRepository -> Room AlarmEntity/AlarmDao.java/WakeGuardDatabase.java -> AlarmScheduler -> AlarmReceiver -> AlarmRingingService -> AlarmRingActivity -> ChallengeRouter. Preserve scheduler identity and generation guards.
+- RingingSessionStore tracks runtime session state; inspect actual recovery behavior before changes. AlarmBootReceiver handles reboot recovery; DismissReceiver handles notification actions.
+- AwakeCheckManager uses separate SharedPreferences check records and scheduled prompt/timeout/confirm actions via AwakeCheckReceiver and AwakeCheckActivity. Explicit confirmation feeds LinkedAlarmManager; preserve unrelated and future occurrences.
+- UpcomingAlertsManager/Screen expose pending snooze and check state; cancellation must not implicitly confirm a linked session.
+- ThemePreferences DataStore holds appearance, alarm defaults, power settings and ringing duration; SettingsScreen accordions edit these. AlarmAppearance/WakeGuardTheme provide palettes; Theme.kt is a separate overload.
+- AlarmRingScreen contains redesigned Swipe UI; SwipeUpControl.kt exists in baseline, verify usage before removing. ChallengeLayout and Router integrate Math, Shake, Memory and Quran Typing.
+- QuranTypingConfig encodes `QURAN_TYPING:<length>:<rounds>` in existing challengeType string; no Room migration. QuranAyahs contains 22 passages; QuranTypingScreen validates English input and highlights original text. Latest screen is quran_highlight_fix replacement, collection is quran_refined replacement.
+- RingtoneScreen and WakeGuardSounds manage built-in keys/custom URI and preview; preserve persisted soundUri and URI access.
+- Screen-off receiver approximates single power press only while ringing; cannot uniquely identify hardware key. Double press dropped. Unlimited duration is preference-driven; verify lifecycle and system limits.
 
-## Core flows
-1. **Create/edit:** Alarm Editor -> MainActivity callback -> Room repository -> generation-aware scheduler -> update Compose list.
-2. **Toggle/delete:** Persist state in Room, schedule/cancel pending OS alarm; rollback/reload on failures.
-3. **Ring:** AlarmManager -> `AlarmReceiver` -> foreground `AlarmRingingService` -> `AlarmRingActivity` -> `ChallengeRouter` -> Swipe/Math/Shake.
-4. **Preview:** Alarm Editor -> dismissal method -> `AlarmRingActivity(preview_mode=true)` -> finish back to dismissal settings. No real alarm should be stopped by preview.
-5. **Theme:** `ThemePreferences` DataStore holds app theme and alarm theme; `WakeGuardTheme` colors the app; `AlarmAppearance`/ringing palette selects independent ringing colors. Confirm all screens consume selected palette.
-6. **Back navigation:** Settings -> home; editor child pages -> editor; preview Activity -> dismissal method; editor -> home. Actual alarm Back must not bypass required dismissal.
+## Current checkpoint — 2026-11-25
+Source baseline: app(20261125-023822).zip plus subsequent individual replacements. The current local Android Studio tree has not been re-exported. User screenshots demonstrate Quran Typing running; user approved the latest punctuation highlighting. Full current build output, regression results and Git hash/push remain unconfirmed.
 
-## Important design rules
-- Alarm engine independent of Compose lifecycle; generation-aware PendingIntent identity and receiver validation.
-- Persist before schedule/cancel where practical; avoid stale triggers and duplicate ringing.
-- Optional alarm label: empty/default names are not rendered; do not inject `Preview:`.
-- Swipe UI uses animated chevrons with no mouse icon; Shake UI uses drawn phone icon and animated progress.
-- Preserve challenge callbacks and preview mode while styling.
-- Real-world reliability under force-stop, battery restrictions, reboot and permissions is not guaranteed; test explicitly.
+- Core: Room persistence, generation-aware AlarmManager scheduling, create/edit/delete/toggle, Once/Weekdays/Weekends/Daily/Custom, reboot recovery, full-screen foreground ringing, snooze and optional labels. Earlier core tests passed; overlap previously failed and needs retest.
+- Awake Check: configurable delay and response timeout, explicit I'm Awake, re-ring on ignore; distinct from snooze. Earlier device tests passed.
+- Linked Alarm Groups: multi-select linking, group enable/disable, skip today/tomorrow, explicit awake confirmation skips remaining current-session alarms only. Earlier group tests passed; snooze or challenge completion alone must not skip remaining alarms.
+- Memory: configurable grid, highlights, memorize time and rounds; wrong answer retries with a new pattern. Five dismissal methods now implemented: Swipe, Math, Shake, Memory, Quran Typing.
+- Alarm editor: infinite hour/minute wheels, inline number pickers, global defaults for new alarms (individual overrides retained). Defaults include snooze and Awake Check.
+- Upcoming Alerts: pending snoozes and Awake Checks, countdowns, individual cancellation/confirmation and clear-all confirmation. One-time snooze cancellation should disable the alarm; recurring schedules must remain intact. Retest latest patches.
+- Skip UI: temporarily skipped alarms appear OFF, manual ON clears skip, editing clears skip and re-enables/reschedules even if time unchanged. Custom skip dialog polish delivered; retest.
+- Power controls: Do nothing (default), Snooze (alarm duration or custom), Dismiss (Swipe only). Screen-off/on observed during real ringing on realme; not a physical key API. Double press dropped because camera shortcut interferes. Power-button I'm Awake confirmation for Swipe remains pending.
+- Ringing duration: global Unlimited default or custom minutes, replacing old fixed 15-minute timeout. Long-duration reliability and custom timeout lifecycle unverified. Swipe redesign delivered with draggable handle, animation and live clock.
+- Settings: independent accordions, Save buttons only for unsaved changes, disappear on save/revert; appearance auto-saves. DataStore persists preferences.
+- Quran Typing: Arabic passage, English meaning and reference; English-only input; Short/Medium/Mixed and 1–5 reminders. 22 curated passages (including consecutive verses), offline; no isolated context-dependent fragments intended. Inline feedback, optional punctuation/case, correct punctuation highlights. User approved latest UI/feedback; full content proofreading and regression pending. No new challenges planned.
+- Ringtones: Loud/Medium/Low and custom picker; custom preview and light status bar previously confirmed. Bundled music quality remains open; vibration previously failed and deferred.
 
-## Planned Linked Alarm Groups (not implemented)
-Define group entity and occurrence/session identity based on local wake date. On explicit awake confirmation, cancel only still-pending occurrences in that group's current session; do not cancel unrelated alarms or future repeats. Handle races with already-ringing alarms, snoozes, reboot and time changes. Do not infer functionality from `groupId` field alone.
-
-## Ringtone and system UI architecture (2026-11-21)
-- `ringtone/WakeGuardSounds.kt`: built-in sound registry, `builtin:` keys, raw audio resource IDs, display title and MediaPlayer playback; existing keys should be preserved when possible.
-- `ringtone/RingtoneScreen.kt`: expandable Loud/Medium/Low built-in groups, preview, and custom audio file selection using `ActivityResultContracts.OpenDocument`; persists URI read access where available.
-- `AlarmEditorScreen.kt` holds `soundUri` in editor state and passes it through `onSave`; `MainActivity.kt` persists it to Room `AlarmEntity.soundUri`. Actual ringtone playback flows through receiver/service; verify latest installed versions before editing.
-- User confirmed custom ringtone filename and Play/Stop preview now work. Current bundled audio quality is not accepted; replacing sounds is separate from UI implementation.
-- `ui/theme/WakeGuardTheme.kt` is the active app theme with `ThemeMode` and `WakeGuardColors`; it now controls status bar icon contrast for Light/Dark/System. `Theme.kt` also exists and has a different theme signature; avoid conflating the two.
-- Screen-off receiver in `AlarmRingingService` was introduced to approximate power-button dismissal; verify installed code and avoid treating ACTION_SCREEN_OFF as a unique power-key signal.
-
-## Proposed Awake Check architecture (NOT IMPLEMENTED)
-- Persist an awake-check occurrence/session record separate from normal alarm and snooze state.
-- On genuine successful challenge dismissal, schedule a check at now + configurable delay; show actionable confirmation when due.
-- If not confirmed before configurable response deadline, schedule/restart ringing; ensure idempotent event IDs, stale-generation guards, restart/reboot recovery, and notification/full-screen restrictions.
-- An explicit "I'm Awake" action completes the check; later, Linked Alarm Groups may consume it to cancel only pending alarms for the current local-date group session.
-- Do not rely on Compose timers or a permanently running foreground service for long waits; select permitted Android scheduling primitives after inspecting current engine and OS support.
-
-## Build and verification status
-Latest Gradle config, clean build, current phone regression and Git push are **not confirmed**. Inspect project files and build output before declaring release-ready or changing dependency versions.
+## Next work (priority order)
+1. Inspect fresh source/actual installed replacements and run Windows `git status --short`, `git log -1 --oneline`, `.\gradlew.bat :app:assembleDebug`.
+2. Fix one-time alarm state/countdown: observed Ring Once still ON after unattended ringing stopped, home displayed tomorrow despite no verified future occurrence. Distinguish active, snoozed, awaiting check, completed and scheduled; do not invent tomorrow for consumed Once. Preserve recurring and linked sessions.
+3. Implement optional single power-button I'm Awake confirmation for Swipe only; validate active check token and use normal confirmation path. Do not bypass other challenges; no double-press feature.
+4. Verify Unlimited beyond old 15-minute limit and longer supervised tests, custom timeout, screen-off/background, battery restrictions, process death, reboot, overlapping alarms, stale events and permissions. Android cannot guarantee indefinite ringing; ensure timeout does not falsely confirm awake or skip linked alarms.
+5. Regression: all five challenges, previews, snooze, Awake Check, linked groups, upcoming cancellation, skip/edit, settings persistence, themes, ringtone and vibration. Verify Quran content against reliable references before release.
+6. Commit/push verified checkpoint and record actual branch/hash; no speculative Gradle/dependency changes. Later: approved musical ringtone collection, accessibility, onboarding and release polish.

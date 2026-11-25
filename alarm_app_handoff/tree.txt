@@ -1,23 +1,54 @@
-com/wakeguard/alarm/
+app/src/main/java/com/wakeguard/alarm/
+├── AlarmEditorScreen.kt
+├── AwakeCheckManager.kt
 ├── MainActivity.kt
 ├── data/
 │   ├── local/
-│   │   ├── AlarmEntity.kt
 │   │   ├── AlarmDao.java
+│   │   ├── AlarmEntity.kt
 │   │   └── WakeGuardDatabase.java
 │   └── repository/
 │       └── AlarmRepository.kt
 ├── domain/
-│   ├── model/
 │   └── scheduler/
 │       └── AlarmScheduler.kt
+├── linked/
+│   └── LinkedAlarmManager.kt
 ├── receiver/
+│   ├── AlarmBootReceiver.kt
 │   ├── AlarmReceiver.kt
+│   ├── AwakeCheckReceiver.kt
 │   └── DismissReceiver.kt
+├── ringtone/
+│   ├── RingtoneScreen.kt
+│   └── WakeGuardSounds.kt
 ├── service/
-│   └── AlarmRingingService.kt
-└── ui/
-    ├── home/
-    ├── ringing/
-    │   └── AlarmRingActivity.kt
-    └── theme/
+│   ├── AlarmRingingService.kt
+│   └── RingingSessionStore.kt
+├── ui/
+│   ├── ringing/
+│   │   ├── AlarmRingActivity.kt
+│   │   ├── AlarmRingScreen.kt
+│   │   ├── AwakeCheckActivity.kt
+│   │   ├── SwipeUpControl.kt
+│   │   └── challenges/
+│   │       ├── ChallengeLayout.kt
+│   │       ├── ChallengeRouter.kt
+│   │       ├── MathChallengeScreen.kt
+│   │       ├── MemoryChallengeScreen.kt
+│   │       ├── MemoryChallengeState.kt
+│   │       ├── QuranAyahs.kt
+│   │       ├── QuranTypingConfig.kt
+│   │       ├── QuranTypingScreen.kt
+│   │       └── ShakeChallengeScreen.kt
+│   └── theme/
+│       ├── AlarmAppearance.kt
+│       ├── Color.kt
+│       ├── SettingsScreen.kt
+│       ├── Theme.kt
+│       ├── ThemePreferences.kt
+│       ├── Type.kt
+│       └── WakeGuardTheme.kt
+└── upcoming/
+    ├── UpcomingAlertsManager.kt
+    └── UpcomingAlertsScreen.kt
